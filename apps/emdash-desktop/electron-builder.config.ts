@@ -5,8 +5,6 @@ import {
   ARTIFACT_PREFIX,
   LINUX_DESKTOP_ID,
   PRODUCT_NAME,
-  R2_BASE_URL,
-  UPDATE_CHANNEL,
 } from './src/core/primitives/app-identity/api/app-identity.ts';
 
 const config: Configuration = {
@@ -16,19 +14,7 @@ const config: Configuration = {
   extraMetadata: { desktopName: `${LINUX_DESKTOP_ID}.desktop` },
   directories: { output: 'release' },
   artifactName: `${ARTIFACT_PREFIX}-\${arch}.\${ext}`,
-  publish: [
-    {
-      provider: 'github',
-      owner: 'generalaction',
-      repo: 'emdash',
-      releaseType: 'draft',
-    },
-    {
-      provider: 'generic',
-      url: R2_BASE_URL,
-      channel: UPDATE_CHANNEL,
-    },
-  ],
+  publish: null,
   generateUpdatesFilesForAllChannels: false,
   files: ['out/**/*', 'node_modules/**/*', 'drizzle/**/*'],
   asarUnpack: [

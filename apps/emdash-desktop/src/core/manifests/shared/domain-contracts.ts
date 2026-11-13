@@ -20,6 +20,7 @@ import { repositoryContract, repositoryDomain } from '@core/features/repository/
 import { searchContract, searchDomain } from '@core/features/search/api';
 import { skillsContract, skillsDomain } from '@core/features/skills/api';
 import { sourceControlContract, sourceControlDomain } from '@core/features/source-control/api';
+import { taixuContract, taixuDomain } from '@core/features/taixu/api/contract';
 import { tasksDomain, tasksWireContract } from '@core/features/tasks/api';
 import { terminalsContract, terminalsDomain } from '@core/features/terminals/api';
 import { updatesContract, updatesDomain } from '@core/features/updates/api';
@@ -51,6 +52,7 @@ import { appSettingsContract, appSettingsDomain } from '@core/services/settings/
 import { sshContract, sshDomain } from '@core/services/ssh/api';
 
 export const desktopDomainContracts = {
+  [taixuDomain]: taixuContract,
   [usageDomain]: usageContract,
   [accountDomain]: accountContract,
   [agentsDomain]: agentsContract,

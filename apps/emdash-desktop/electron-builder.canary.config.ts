@@ -6,8 +6,6 @@ import {
   ARTIFACT_PREFIX,
   LINUX_DESKTOP_ID,
   PRODUCT_NAME,
-  R2_BASE_URL,
-  UPDATE_CHANNEL,
 } from './src/core/primitives/app-identity/api/app-identity.canary.ts';
 
 const config: Configuration = {
@@ -17,24 +15,7 @@ const config: Configuration = {
   extraMetadata: { desktopName: `${LINUX_DESKTOP_ID}.desktop` },
   directories: { output: 'release' },
   artifactName: `${ARTIFACT_PREFIX}-\${arch}.\${ext}`,
-  publish: [
-    {
-      provider: 'github',
-      owner: 'generalaction',
-      repo: 'emdash',
-      releaseType: 'draft',
-      // 'canary' must match the prerelease identifier in scripts/release/lib/version.ts
-      // (e.g. 1.1.33-canary.42 -> prerelease id "canary"). electron-updater uses this
-      // id to select the matching release from the Atom feed and to construct the
-      // channel filename (canary*.yml) it fetches from GitHub.
-      channel: 'canary',
-    },
-    {
-      provider: 'generic',
-      url: R2_BASE_URL,
-      channel: UPDATE_CHANNEL,
-    },
-  ],
+  publish: null,
   generateUpdatesFilesForAllChannels: false,
   files: ['out/**/*', 'node_modules/**/*', 'drizzle/**/*'],
   asarUnpack: [

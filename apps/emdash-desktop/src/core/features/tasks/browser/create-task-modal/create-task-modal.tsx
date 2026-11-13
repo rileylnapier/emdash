@@ -1,7 +1,7 @@
 import type { PullRequest } from '@emdash/plugins/pull-requests/schemas';
 import { Dialog } from '@emdash/ui/react/primitives';
 import { observer } from 'mobx-react-lite';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   issueTerms,
   preferredIssueProvider,
@@ -9,6 +9,7 @@ import {
 import { useConnectedIssueProviders } from '@core/features/integrations/api/browser/use-connected-issue-providers';
 import {
   firstAvailableProjectId,
+  getProjectManagerStore,
   getProjectStore,
   getProjectViewStore,
   projectData as selectProjectData,
@@ -23,7 +24,7 @@ import { useInitialConversationState } from '@core/features/tasks/contributions/
 import { TaskConfigPanel } from '@core/features/tasks/contributions/browser/task-config/task-config-panel';
 import { TaskStateProvider } from '@core/features/tasks/contributions/browser/task-config/task-state-context';
 import { WorkspaceSettingsSection } from '@core/features/tasks/contributions/browser/task-config/workspace-settings-section';
-import { useModalController } from '@core/manifests/browser/modal-api';
+import { openModal, useModalController } from '@core/manifests/browser/modal-api';
 import { projectAvailabilityUi } from '@core/manifests/browser/project-availability-ui';
 import { ConfirmButton } from '@core/primitives/keybindings/browser/confirm-button';
 import { defineModal } from '@core/primitives/modals/react';
@@ -54,14 +55,18 @@ export const CreateTaskModal = observer(function CreateTaskModal({
   strategy: initialStrategy,
   initialPR,
   initialWorkspaceId,
+  initialPrompt,
 }: {
   projectId?: string;
   strategy?: CreateTaskStrategy;
   initialPR?: PullRequest;
   initialWorkspaceId?: string;
+  initialPrompt?: string;
 }) {
   const { complete } = useModalController('taskModal');
-  const selectedProjectId = useDefaultProjectId(projectId);
+  const defaultProjectId = useDefaultProjectId(projectId);
+  const [selectedProjectId, setSelectedProjectId] = useState(defaultProjectId);
+  const projects = Array.from(getProjectManagerStore().projects.values());
 
   const projectData = selectedProjectId
     ? selectProjectData(getProjectStore(selectedProjectId))
@@ -93,10 +98,13 @@ export const CreateTaskModal = observer(function CreateTaskModal({
   const hasPrSupport =
     !!pullRequestRepositoryUrl && !!repositoryStore?.providerRepository?.capabilities.pullRequests;
 
-  const defaults = createTaskModalDefaults(initialStrategy, {
-    hasIssues: hasAnyIssueIntegration,
-    hasPullRequests: hasPrSupport,
-  });
+  const defaults =
+    initialPrompt !== undefined && initialStrategy === undefined
+      ? { linkedType: null, tab: 'conversation' as const }
+      : createTaskModalDefaults(initialStrategy, {
+          hasIssues: hasAnyIssueIntegration,
+          hasPullRequests: hasPrSupport,
+        });
 
   const resolvedInitialPR = initialStrategy === 'from-pull-request' ? initialPR : undefined;
   const state = useCreateTaskState(
@@ -112,7 +120,10 @@ export const CreateTaskModal = observer(function CreateTaskModal({
   );
 
   const { includeIssueContextByDefault } = useTaskSettings();
-  const initialConversation = useInitialConversationState(selectedProjectId);
+  const initialConversation = useInitialConversationState(selectedProjectId, undefined, {
+    initialPrompt,
+    resetPromptOnProjectChange: false,
+  });
   const { navigate } = useNavigate();
 
   const { handleCreateTask, canCreate } = useCreateTaskCallback({
@@ -141,6 +152,30 @@ export const CreateTaskModal = observer(function CreateTaskModal({
       </Dialog.Header>
       <Dialog.Body>
         <div className="flex w-full flex-col gap-5">
+          <label className="flex flex-col gap-2 text-sm">
+            Project
+            <select
+              aria-label="Project"
+              className="rounded border border-border bg-background px-3 py-2"
+              value={selectedProjectId ?? ''}
+              onChange={(event) => setSelectedProjectId(event.target.value || undefined)}
+            >
+              <option value="">Choose a project</option>
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            className="self-start text-sm underline"
+            onClick={() =>
+              void openModal('addProjectModal', { mode: 'pick', navigateOnCreate: false })
+            }
+          >
+            Add project folder
+          </button>
           <TaskNameField state={state.taskName} />
           <LinkedEntitySection
             state={state}

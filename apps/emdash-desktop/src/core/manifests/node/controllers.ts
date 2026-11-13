@@ -21,6 +21,7 @@ import {
 } from '@core/features/browser/node/wire-controller';
 import { createCatalogWireController } from '@core/features/catalog/node/wire-controller';
 import type { CompensationRunner } from '@core/features/conversations/node/createConversation';
+import { getConversations } from '@core/features/conversations/node/getConversations';
 import { createConversationsWireController } from '@core/features/conversations/node/wire-controller';
 import {
   createDevPerfWireController,
@@ -47,7 +48,7 @@ import { createPreviewServersWireController } from '@core/features/preview-serve
 import type { ProjectAttachmentManager } from '@core/features/projects/api/node/project-attachment-manager';
 import type { ProjectSettingsService } from '@core/features/projects/api/node/settings/project-settings-service';
 import type { ProjectDeletionDependencies } from '@core/features/projects/node/operations/deleteProject';
-import { getProjectById } from '@core/features/projects/node/operations/getProjects';
+import { getProjectById, getProjects } from '@core/features/projects/node/operations/getProjects';
 import { createProjectsWireController } from '@core/features/projects/node/wire-controller';
 import type { GitLabRepositoryService } from '@core/features/repository/node/gitlab-repository-service';
 import { createRepositoryWireController } from '@core/features/repository/node/wire-controller';
@@ -55,6 +56,7 @@ import type { SearchService } from '@core/features/search/node/search-service';
 import { createSearchWireController } from '@core/features/search/node/wire-controller';
 import { createSkillsWireController } from '@core/features/skills/node/wire-controller';
 import { createSourceControlWireController } from '@core/features/source-control/node/wire-controller';
+import { createTaixuWireController } from '@core/features/taixu/node/wire-controller';
 import type { TaskService } from '@core/features/tasks/api/node/task-service';
 import type { TaskSessionLaunchContextResolver } from '@core/features/tasks/api/node/task-session-launch-context';
 import type { TaskSessionManager } from '@core/features/tasks/api/node/task-session-manager';
@@ -466,6 +468,15 @@ export const desktopNodeControllers = {
         scope
       );
     },
+  },
+  taixu: {
+    create: ({ db, taskService, scope }) =>
+      createTaixuWireController({
+        readProjects: () => getProjects(db),
+        readConversations: () => getConversations(db),
+        taskService,
+        scope,
+      }),
   },
   updates: {
     create: ({ updateOperations }) => createUpdatesWireController(updateOperations),

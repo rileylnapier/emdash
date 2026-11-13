@@ -5,10 +5,17 @@ import type { UpdateInfo } from 'electron-updater';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { updatesContract } from '@core/features/updates/api/contract';
 import { createUpdatesWireController } from '@core/features/updates/node/wire-controller';
+import type * as AppIdentity from '@core/primitives/app-identity/api/app-identity';
 import { UpdateService } from './update-service';
 import { formatUpdaterError } from './utils';
 
-const mocks = vi.hoisted(() => ({ getUpdater: vi.fn() }));
+const mocks = vi.hoisted(() => ({ getUpdater: vi.fn(), updatesEnabled: true }));
+vi.mock('@core/primitives/app-identity/api/app-identity', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppIdentity>()),
+  get UPDATES_ENABLED() {
+    return mocks.updatesEnabled;
+  },
+}));
 vi.mock('electron-updater', () => ({
   default: {
     get autoUpdater() {
@@ -35,6 +42,7 @@ let service: UpdateService;
 let transfer: ReturnType<typeof deferred<string[]>>;
 
 beforeEach(async () => {
+  mocks.updatesEnabled = true;
   vi.useFakeTimers();
   vi.stubEnv('DEV', false);
   updater.removeAllListeners();
@@ -130,4 +138,18 @@ describe('desktop update lifecycle', () => {
     transfer.resolve([]);
     expect(service.getState().error).toBeUndefined();
   });
+});
+
+it('keeps checks, downloads and installation inactive in the Taixu fork', async () => {
+  service.dispose();
+  vi.clearAllMocks();
+  mocks.updatesEnabled = false;
+  service = new UpdateService();
+  await service.initialize();
+  await service.checkForUpdates();
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(service.getState().status).toBe('idle');
+  expect(updater.checkForUpdatesAndNotify).not.toHaveBeenCalled();
+  expect(updater.downloadUpdate).not.toHaveBeenCalled();
+  expect(updater.quitAndInstall).not.toHaveBeenCalled();
 });

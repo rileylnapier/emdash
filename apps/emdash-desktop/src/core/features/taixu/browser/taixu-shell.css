@@ -1,0 +1,127 @@
+.taixu-shell {
+  height: 100vh;
+  background: #0e1328;
+  color: #efe6d2;
+}
+.taixu-titlebar {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  padding: 0 18px 0 84px;
+  border-bottom: 1px solid #c9a24b25;
+  -webkit-app-region: drag;
+}
+.taixu-titlebar button,
+.taixu-error button,
+.taixu-setup button {
+  -webkit-app-region: no-drag;
+  cursor: pointer;
+  color: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+.taixu-titlebar button:hover,
+.taixu-error button:hover {
+  background: #efe6d210;
+}
+.taixu-titlebar button:focus-visible,
+.taixu-error button:focus-visible {
+  outline: 2px solid #c9a24b;
+}
+.taixu-titlebar .taixu-brand {
+  font:
+    20px Georgia,
+    serif;
+  padding-left: 0;
+  color: #c9a24b;
+}
+.taixu-brand span {
+  margin-left: 10px;
+  font: 10px system-ui;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: #efe6d280;
+}
+.taixu-titlebar nav {
+  display: flex;
+  gap: 5px;
+}
+.taixu-titlebar button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.taixu-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+.taixu-actions button:last-child,
+.taixu-setup button {
+  border-color: #c9a24b55;
+}
+.taixu-world,
+.taixu-workbench {
+  height: calc(100vh - 48px);
+  overflow: hidden;
+}
+.taixu-world[hidden],
+.taixu-workbench[hidden] {
+  display: none;
+}
+.taixu-world iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+.taixu-setup {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
+  text-align: center;
+  padding: 32px;
+}
+.taixu-setup h1 {
+  font:
+    42px Georgia,
+    serif;
+}
+.taixu-setup p {
+  max-width: 480px;
+  color: #efe6d299;
+}
+.taixu-error {
+  position: fixed;
+  bottom: 24px;
+  left: 24px;
+  right: 24px;
+  z-index: 100;
+  background: #181e32;
+  border: 1px solid #c9a24b55;
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+.taixu-error span {
+  flex: 1;
+}
+@media (max-width: 900px) {
+  .taixu-titlebar {
+    gap: 12px;
+  }
+  .taixu-brand span {
+    display: none;
+  }
+  .taixu-titlebar button {
+    padding: 6px;
+  }
+}

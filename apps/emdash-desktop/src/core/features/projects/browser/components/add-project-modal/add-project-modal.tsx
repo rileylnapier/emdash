@@ -42,12 +42,15 @@ export interface AddProjectModalProps {
   strategy?: Strategy;
   mode?: Mode;
   connectionId?: string;
+  /** Keep a parent task dialog and its draft open when adding a project from it. */
+  navigateOnCreate?: boolean;
 }
 
 export const AddProjectModal = observer(function AddProjectModal({
   strategy: strategyProp,
   mode: modeProp,
   connectionId: connectionIdProp,
+  navigateOnCreate = true,
 }: AddProjectModalProps) {
   const modal = useModalController('addProjectModal');
   const [strategy, setStrategy] = useState<Strategy>(strategyProp ?? 'local');
@@ -293,7 +296,7 @@ export const AddProjectModal = observer(function AddProjectModal({
       if (result.kind === 'existing') {
         setSubmitState('idle');
         modal.dismiss();
-        navigate(projectViewDef({ projectId: result.projectId }));
+        if (navigateOnCreate) navigate(projectViewDef({ projectId: result.projectId }));
         return;
       }
 
@@ -310,7 +313,7 @@ export const AddProjectModal = observer(function AddProjectModal({
         });
       setSubmitState('idle');
       modal.dismiss();
-      navigate(projectViewDef({ projectId: result.projectId }));
+      if (navigateOnCreate) navigate(projectViewDef({ projectId: result.projectId }));
     } catch (error) {
       log.error(error);
       modal.setCloseGuard(false);
