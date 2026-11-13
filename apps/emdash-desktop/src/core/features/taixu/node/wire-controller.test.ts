@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   choose: vi.fn(),
   on: vi.fn(),
   removeListener: vi.fn(),
+  resolveProvider: vi.fn(),
 }));
 vi.mock('electron', () => ({
   app: {
@@ -41,6 +42,10 @@ let wire: ReturnType<typeof createTestWire<typeof taixuContract>>;
 let worker: Worker;
 beforeEach(async () => {
   vi.clearAllMocks();
+  mocks.resolveProvider.mockResolvedValue({
+    bin: '/configured/codex',
+    env: { OPENAI_API_KEY: 'private-key', NODE_OPTIONS: 'must-not-pass' },
+  });
   root = await mkdtemp(path.join(tmpdir(), 'taixu-host-test-'));
   for (const file of [
     'apps/taixu/server/desktop.mjs',
@@ -62,6 +67,7 @@ beforeEach(async () => {
     taixuContract,
     createTaixuWireController({
       scope,
+      resolveProvider: mocks.resolveProvider,
       readProjects: async () => [
         {
           id: 'project',
@@ -103,7 +109,40 @@ it('shares a single utility process and sends status metadata only', async () =>
   const snapshot = worker.postMessage.mock.calls[0][0];
   expect(snapshot.snapshot.conversations[0].agentStatus).toBe('working');
   expect(JSON.stringify(snapshot)).not.toMatch(/do not cross|private transcript/);
+  expect(snapshot.snapshot.providers.map((p: { id: string }) => p.id).sort()).toEqual([
+    'claude',
+    'codex',
+  ]);
+  expect(snapshot.snapshot.providers.every((p: { models: unknown[] }) => p.models.length > 0)).toBe(
+    true
+  );
   expect(await wire.client.status({})).toEqual({ running: true });
+});
+it('resolves launch settings over the private worker channel, separately from renderer data', async () => {
+  await wire.client.connect({});
+  worker.emit('message', { type: 'provider-request', id: '1', provider: 'codex' });
+  await vi.waitFor(() =>
+    expect(worker.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'provider-response', id: '1' })
+    )
+  );
+  const response = worker.postMessage.mock.calls.find(([m]) => m.type === 'provider-response')?.[0];
+  expect(response.context.bin).toBe('/configured/codex');
+  expect(response.context.env.OPENAI_API_KEY).toBe('private-key');
+  expect(response.context.env.NODE_OPTIONS).toBeUndefined();
+  expect(
+    JSON.stringify(worker.postMessage.mock.calls.filter(([m]) => m.type === 'snapshot'))
+  ).not.toContain('private-key');
+  worker.emit('message', { type: 'provider-request', id: '2', provider: 'arbitrary-command' });
+  expect(mocks.resolveProvider).toHaveBeenCalledTimes(1);
+  mocks.resolveProvider.mockRejectedValue(new Error('sensitive error'));
+  worker.emit('message', { type: 'provider-request', id: '3', provider: 'claude' });
+  await vi.waitFor(() =>
+    expect(worker.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'provider-response', id: '3', error: expect.any(String) })
+    )
+  );
+  expect(JSON.stringify(worker.postMessage.mock.calls)).not.toContain('sensitive error');
 });
 it('reports worker failure and allows a fresh connection', async () => {
   await wire.client.connect({});

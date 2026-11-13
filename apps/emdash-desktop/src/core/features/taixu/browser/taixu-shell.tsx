@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { settingsViewDef } from '@core/features/settings/contributions/views';
 import { taskViewDef } from '@core/features/tasks/contributions/views';
 import { confirmOpenExternalLink } from '@core/features/workbench/api/browser/open-external-link';
 import { openModal } from '@core/manifests/browser/modal-api';
@@ -87,7 +88,12 @@ export function TaixuShell({
         !('action' in data)
       )
         return;
-      if (
+      if (data.action === 'accounts' || data.action === 'usage') {
+        getNavigation().navigate(
+          settingsViewDef({ tab: data.action === 'usage' ? 'usage' : 'clis-models' })
+        );
+        inspect(true);
+      } else if (
         data.action === 'create-task' &&
         'prompt' in data &&
         typeof data.prompt === 'string' &&
@@ -147,6 +153,22 @@ export function TaixuShell({
           ))}
         </nav>
         <div className="taixu-actions">
+          <button
+            onClick={() => {
+              getNavigation().navigate(settingsViewDef({ tab: 'clis-models' }));
+              inspect(true);
+            }}
+          >
+            Models &amp; accounts
+          </button>
+          <button
+            onClick={() => {
+              getNavigation().navigate(settingsViewDef({ tab: 'usage' }));
+              inspect(true);
+            }}
+          >
+            Usage
+          </button>
           <button
             onClick={() =>
               void createTask().catch(() => setError('Could not open the task dialog.'))

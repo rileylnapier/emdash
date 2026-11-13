@@ -1,8 +1,10 @@
 import { access, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { buildAllowlistedAgentEnv } from '@emdash/core/primitives/agent-env/api';
 import type { Scope } from '@emdash/shared/concurrency';
 import { createController } from '@emdash/wire/rpc';
 import { app, dialog, utilityProcess, type UtilityProcess } from 'electron';
+import { listPlugins } from '@core/features/agents/api/node/plugin-registry';
 import type { TaskService } from '@core/features/tasks/api/node/task-service';
 import type { Conversation } from '@core/primitives/conversations/api';
 import type { Project } from '@core/primitives/projects/api';
@@ -13,11 +15,15 @@ export function createTaixuWireController({
   readConversations,
   taskService,
   scope,
+  resolveProvider,
 }: {
   readProjects: () => Promise<Project[]>;
   readConversations: () => Promise<Conversation[]>;
   taskService: Pick<TaskService, 'getTasks'>;
   scope: Scope;
+  resolveProvider: (
+    provider: 'claude' | 'codex'
+  ) => Promise<{ bin: string; env: Record<string, string> }>;
 }) {
   let child: UtilityProcess | undefined;
   let url: string | null = null;
@@ -60,6 +66,19 @@ export function createTaixuWireController({
         type: 'snapshot',
         snapshot: {
           at: new Date().toISOString(),
+          providers: listPlugins()
+            .filter((p) => ['claude', 'codex'].includes(p.metadata.id))
+            .map((p) => ({
+              id: p.metadata.id,
+              label: p.metadata.id === 'codex' ? 'OpenAI / Codex' : 'Claude',
+              models:
+                p.capabilities.models?.kind === 'selectable'
+                  ? Object.entries(p.capabilities.models.modelOptions).map(([id, value]) => ({
+                      id,
+                      label: value.name,
+                    }))
+                  : [],
+            })),
           projects: projects.map((p) => ({ id: p.id, name: p.name, path: p.path, type: p.type })),
           tasks: tasks.map((t) => ({
             id: t.id,
@@ -162,6 +181,42 @@ export function createTaixuWireController({
         finish({ url: null, error: 'Taixu took too long to start. Try again.' });
       }, 15000);
       worker.on('message', (message: unknown) => {
+        if (child !== worker) return;
+        // Launch configuration travels only over the owned parent channel, never HTTP or the renderer.
+        if (
+          message &&
+          typeof message === 'object' &&
+          'type' in message &&
+          message.type === 'provider-request' &&
+          'id' in message &&
+          typeof message.id === 'string' &&
+          'provider' in message &&
+          (message.provider === 'claude' || message.provider === 'codex')
+        ) {
+          const id = message.id;
+          void resolveProvider(message.provider)
+            .then((value) => {
+              if (child === worker)
+                worker.postMessage({
+                  type: 'provider-response',
+                  id,
+                  context: {
+                    bin: value.bin,
+                    env: buildAllowlistedAgentEnv({ ...process.env, ...value.env }),
+                  },
+                });
+            })
+            .catch(() => {
+              if (child === worker)
+                worker.postMessage({
+                  type: 'provider-response',
+                  id,
+                  error:
+                    'Check this provider in Models & accounts. Its configured executable could not be resolved.',
+                });
+            });
+          return;
+        }
         if (
           !message ||
           typeof message !== 'object' ||

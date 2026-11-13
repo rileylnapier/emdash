@@ -470,12 +470,22 @@ export const desktopNodeControllers = {
     },
   },
   taixu: {
-    create: ({ db, taskService, scope }) =>
+    create: ({ db, taskService, scope, agentDependencies, providerSettings }) =>
       createTaixuWireController({
         readProjects: () => getProjects(db),
         readConversations: () => getConversations(db),
         taskService,
         scope,
+        resolveProvider: async (providerId) => {
+          const manager = await agentDependencies.getDependencyManager();
+          if (!manager.success) throw new Error('Local agent settings are unavailable.');
+          const cli = await manager.data.resolver.resolve({ id: providerId });
+          if (!cli.success) throw new Error('Select an installed CLI in Models & accounts.');
+          return {
+            bin: cli.data.path,
+            env: (await providerSettings.getItem(providerId))?.env ?? {},
+          };
+        },
       }),
   },
   updates: {
