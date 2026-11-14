@@ -39,7 +39,9 @@ export async function createStudioService({
   build,
   expose,
   updates,
+  applyServerMode = () => {},
 }: {
+  applyServerMode?: (enabled: boolean) => void;
   updates?: ReturnType<typeof createUpdateHost>;
   ssh: SshServiceHandle;
   hosts: Pick<Hosts, 'onInvalidate'>;
@@ -53,6 +55,7 @@ export async function createStudioService({
   let selected: string | null = null;
   let name: string | null = null;
   let sharing = false;
+  let serverMode = false;
   let error: string | null = null;
   let remote: RemoteSession | undefined;
   let server: Awaited<ReturnType<typeof serveStudioSocket>> | undefined;
@@ -62,11 +65,12 @@ export async function createStudioService({
     selected = typeof saved.selected === 'string' ? saved.selected : null;
     name = typeof saved.name === 'string' ? saved.name : null;
     sharing = saved.sharing === true;
+    serverMode = saved.serverMode === true && selected === null;
   } catch {
     /* First launch. */
   }
   async function save() {
-    await writeFile(`${configFile}.tmp`, JSON.stringify({ selected, name, sharing }), {
+    await writeFile(`${configFile}.tmp`, JSON.stringify({ selected, name, sharing, serverMode }), {
       mode: 0o600,
     });
     await rename(`${configFile}.tmp`, configFile);
@@ -77,6 +81,9 @@ export async function createStudioService({
       name,
       connected: !!remote?.gateway && !remote.abort.signal.aborted,
       sharing: !!server,
+      serverMode,
+      build,
+      uptimeSeconds: Math.floor(process.uptime()),
       socketPath,
       error,
       machines: (await ssh.machines.getMachines()).map(({ id, name }) => ({ id, name })),
@@ -294,8 +301,24 @@ export async function createStudioService({
     checkUpdate: () => updater?.check() ?? unavailableUpdate(),
     installUpdate: () => updater?.install() ?? unavailableUpdate(),
     status,
+    setServerMode: ({ enabled }) =>
+      serial(async () => {
+        if (isUpdateHeld())
+          throw new Error('Wait for the update to finish before changing display mode.');
+        if (enabled && selected) throw new Error('Use this Mac before enabling server mode.');
+        const previous = serverMode;
+        serverMode = enabled;
+        try {
+          await save();
+        } catch (cause) {
+          serverMode = previous;
+          throw cause;
+        }
+        applyServerMode(enabled);
+      }),
     connect: ({ id }) =>
       serial(() => {
+        if (serverMode) throw new Error('Open Taixu before switching computers.');
         if (isUpdateHeld()) throw new Error('Wait for the update to finish before reconnecting.');
         return attach(id);
       }),
@@ -321,6 +344,7 @@ export async function createStudioService({
       });
     },
   });
+  applyServerMode(serverMode);
   if (sharing)
     await share(true).catch(() => {
       error = 'Could not enable Studio sharing. Another Taixu may already be sharing.';

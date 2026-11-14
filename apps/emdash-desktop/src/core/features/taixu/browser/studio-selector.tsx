@@ -3,7 +3,7 @@ import { openModal } from '@core/manifests/browser/modal-api';
 import { getStudioClient, isStudioDesktop } from '../api/browser/studio-client';
 import type { StudioStatus } from '../api/studio-contract';
 
-export function StudioSelector() {
+export function StudioSelector({ onServerMode }: { onServerMode: () => Promise<void> }) {
   const [status, setStatus] = useState<StudioStatus>();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -79,6 +79,13 @@ export function StudioSelector() {
               {status?.sharing && (
                 <small>Access uses your Mac login over SSH. Repositories stay here.</small>
               )}
+              <button disabled={busy} onClick={() => void action(onServerMode)}>
+                Use server mode
+              </button>
+              <small>
+                A small status window without the turtle. Local Head replies stop when the world
+                closes; coding tasks and laptop sessions keep running.
+              </small>
               {status?.machines.map((machine) => (
                 <button
                   key={machine.id}
