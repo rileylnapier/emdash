@@ -57,3 +57,18 @@ it('preserves the normal startup splash when opening this Mac', async () => {
   expect(mock.seed).toHaveBeenCalledOnce();
   expect(mock.setRemote).toHaveBeenCalledWith(false);
 });
+
+it('automatically reconnects the saved Studio after a laptop restart before desktop stores load', async () => {
+  splash();
+  const saved = { selected: 'studio', name: 'My Studio', connected: false, error: null };
+  mock.status.mockResolvedValue(saved);
+  mock.connect.mockImplementation(async () => {
+    expect(mock.seed).not.toHaveBeenCalled();
+    return { ...saved, connected: true };
+  });
+  await seedDesktopWire();
+  expect(mock.connect).toHaveBeenCalledExactlyOnceWith({ id: 'studio' });
+  expect(mock.setRemote).toHaveBeenCalledWith(true, 'My Studio');
+  expect(mock.seed).toHaveBeenCalledOnce();
+  expect(document.getElementById('taixu-connection-gate')).toBeNull();
+});

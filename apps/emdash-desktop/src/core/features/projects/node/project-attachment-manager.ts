@@ -418,7 +418,7 @@ export class ProjectAttachmentManagerService implements ProjectAttachmentManager
           this.rejectStaleAttempt(entry, attempt, currentProject);
         }
         uncommittedProvider = undefined;
-        await opened.data.dispose();
+        await this.retireProvider(opened.data);
         return;
       }
       entry.attempt = undefined;
@@ -436,7 +436,7 @@ export class ProjectAttachmentManagerService implements ProjectAttachmentManager
       const provider = uncommittedProvider;
       uncommittedProvider = undefined;
       if (provider) {
-        await provider.dispose().catch((disposeError: unknown) => {
+        await this.retireProvider(provider).catch((disposeError: unknown) => {
           log.warn('ProjectAttachmentManager: stale Provider disposal failed', {
             projectId: entry.projectId,
             error: disposeError,
@@ -501,13 +501,22 @@ export class ProjectAttachmentManagerService implements ProjectAttachmentManager
     await attempt.scope.dispose();
   }
 
+  private async retireProvider(provider: ProjectProvider): Promise<void> {
+    // Quitting releases desktop ownership only. Remote tasks survive disconnect;
+    // the local worker host owns local process shutdown. Normal project removal
+    // still performs full teardown.
+    if (this.releaseStarted) await provider.release();
+    else await provider.dispose();
+  }
+
   private async disposeProvider(entry: AttachmentEntry): Promise<void> {
     const provider = entry.provider;
     if (!provider) return;
     entry.provider = undefined;
+    const alreadyReleased = entry.providerReleased;
     entry.providerReleased = true;
     try {
-      await provider.dispose();
+      if (!this.releaseStarted || !alreadyReleased) await this.retireProvider(provider);
     } finally {
       this.hooks.callHookBackground('projectClosed', entry.projectId);
     }

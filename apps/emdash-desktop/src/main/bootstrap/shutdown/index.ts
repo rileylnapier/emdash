@@ -1,4 +1,4 @@
-import type { HostRef } from '@emdash/core/primitives/host/api';
+import { LOCAL_HOST_REF, type HostRef } from '@emdash/core/primitives/host/api';
 import type { RuntimeBroker } from '@emdash/core/services/runtime-broker/api';
 import { app, type BrowserWindow } from 'electron';
 import { assertUpdateActivityIdle } from '@core/features/taixu/node/update-activity';
@@ -94,6 +94,9 @@ export async function assertIdleForTaixuUpdate() {
     throw new Error('Task activity is unavailable. Try again after startup.');
   await assertUpdateActivityIdle(
     sessionSummarySource.runtimes,
-    sessionSummarySource.attachedHosts()
+    // This is the restarting installation's broker, never a renderer's routed
+    // Studio snapshot. Its local host owns the processes disposed by this app.
+    // Attached SSH hosts retain their tasks when this desktop disconnects.
+    [LOCAL_HOST_REF]
   );
 }

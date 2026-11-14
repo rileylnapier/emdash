@@ -20,13 +20,23 @@ export const releaseSchema = z.object({
 });
 export type TaixuRelease = z.infer<typeof releaseSchema>;
 export const updateStateSchema = z.object({
-  status: z.enum(['idle', 'checking', 'downloading', 'ready', 'installing', 'error']),
+  status: z.enum([
+    'idle',
+    'checking',
+    'downloading',
+    'ready',
+    'preparing',
+    'blocked',
+    'installing',
+    'error',
+  ]),
   current: z.string(),
   hold: z.string().nullable(),
   release: releaseSchema.nullable(),
   progress: z.number(),
   message: z.string(),
   remote: z.boolean(),
+  target: z.enum(['this-mac', 'studio', 'both']).optional(),
 });
 export type TaixuUpdateState = z.infer<typeof updateStateSchema>;
 export const maintenanceContract = defineContract({

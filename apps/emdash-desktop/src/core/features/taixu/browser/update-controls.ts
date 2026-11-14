@@ -50,7 +50,7 @@ export function mountUpdateControls(parent: HTMLElement) {
   let held: string | null = null;
   const overlay = document.createElement('dialog');
   overlay.className = 'taixu-update-hold';
-  overlay.textContent = 'Taixu is preparing to restart. Saving your place…';
+  overlay.textContent = 'Checking this Mac’s readiness. Saving your place…';
   document.body.append(overlay);
   const keepOpen = (event: Event) => event.preventDefault();
   overlay.addEventListener('cancel', keepOpen);
@@ -79,30 +79,46 @@ export function mountUpdateControls(parent: HTMLElement) {
       message.textContent = 'Could not confirm restart readiness.';
     });
     summary.textContent =
-      next.status === 'ready'
+      next.status === 'ready' || next.status === 'blocked'
         ? 'Update ready'
         : next.status === 'downloading'
           ? `Updating · ${next.progress}%`
           : next.status === 'installing'
             ? 'Restarting…'
-            : 'Updates';
+            : next.status === 'preparing'
+              ? 'Checking readiness…'
+              : 'Updates';
     message.textContent = next.message;
     progress.hidden = next.status !== 'downloading';
     progress.value = next.progress;
     notes.hidden = !next.release?.notes;
     notes.textContent = next.release?.notes ?? '';
-    explanation.textContent = next.remote
-      ? 'Downloads use your saved Studio connection. Updating restarts Taixu on the Studio first, then on this Mac. Finish active work and pause schedules first.'
-      : 'Updates are prepared on this Mac. Finish active work and pause schedules before restarting Taixu.';
-    button.disabled = pending || ['checking', 'downloading', 'installing'].includes(next.status);
+    explanation.textContent =
+      next.target === 'this-mac' && next.remote
+        ? 'Only this Mac will restart. Studio’s backend and tasks keep running. Taixu reconnects using your saved Studio connection.'
+        : next.target === 'studio'
+          ? 'Only Studio needs updating. Its active work must finish before it can restart.'
+          : next.remote
+            ? 'Downloads use your saved Studio connection. Only computers needing the release will restart, with Studio first. Work and unsaved files on those computers must be resolved.'
+            : 'Updates are prepared on this Mac. Finish active work and pause schedules before restarting Taixu.';
+    button.disabled =
+      pending || ['checking', 'downloading', 'preparing', 'installing'].includes(next.status);
+    const updateLabel =
+      next.target === 'this-mac' || !next.remote
+        ? 'Update this Mac'
+        : next.target === 'studio'
+          ? 'Update Studio'
+          : 'Update both Macs';
     button.textContent =
       next.status === 'ready'
-        ? next.remote
-          ? 'Update both Macs'
-          : 'Restart and update'
-        : next.status === 'installing'
-          ? 'Restarting…'
-          : 'Check for updates';
+        ? updateLabel
+        : next.status === 'blocked'
+          ? `Retry · ${updateLabel}`
+          : next.status === 'preparing'
+            ? 'Checking readiness…'
+            : next.status === 'installing'
+              ? 'Restarting…'
+              : 'Check for updates';
   }
   async function refresh() {
     if (reading || pending || disposed) return;
@@ -126,7 +142,9 @@ export function mountUpdateControls(parent: HTMLElement) {
     try {
       const control = await getStudioClient();
       const next =
-        state?.status === 'ready' ? await control.installUpdate() : await control.checkUpdate();
+        state && ['ready', 'blocked'].includes(state.status)
+          ? await control.installUpdate()
+          : await control.checkUpdate();
       pending = false;
       render(next);
     } catch (error) {

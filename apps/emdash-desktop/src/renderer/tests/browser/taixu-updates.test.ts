@@ -81,3 +81,65 @@ it('ignores an older status response after starting a new download', async () =>
   resolve(idle);
   await expect.element(page.getByText('Updating · 35%', { exact: true })).toBeVisible();
 });
+
+it('names laptop-only updates, retains a task blocker, and retries without checking or downloading again', async () => {
+  const ready = {
+    ...idle,
+    status: 'ready',
+    target: 'this-mac',
+    message: 'Studio is current.',
+    release: { notes: 'Update notes' },
+  };
+  const blocked = {
+    ...ready,
+    status: 'blocked',
+    message: 'This Mac: codex · local-task is working. The verified update is still ready.',
+  };
+  mock.status.mockResolvedValue(ready);
+  mock.install.mockImplementationOnce(async () => {
+    mock.status.mockResolvedValue(blocked);
+    return blocked;
+  });
+  dispose = mountUpdateControls(document.body);
+  await page.getByText('Update ready', { exact: true }).click();
+  await expect
+    .element(page.getByText('Only this Mac will restart.', { exact: false }))
+    .toBeVisible();
+  await page.getByRole('button', { name: 'Update this Mac', exact: true }).click();
+  await expect.element(page.getByRole('status')).toHaveTextContent('This Mac: codex · local-task');
+  const retry = page.getByRole('button', { name: 'Retry · Update this Mac', exact: true });
+  await expect.element(retry).toBeEnabled();
+  mock.install.mockResolvedValue({
+    ...ready,
+    status: 'preparing',
+    message: 'Checking active work and unsaved files on this Mac…',
+  });
+  await retry.click();
+  expect(mock.install).toHaveBeenCalledTimes(2);
+  expect(mock.check).not.toHaveBeenCalled();
+  await expect
+    .element(page.getByRole('button', { name: 'Checking readiness…', exact: true }))
+    .toBeDisabled();
+  expect(document.querySelector('.taixu-update')!.textContent).not.toContain('Restarting');
+});
+
+it('shows Restarting only after a preparing response advances to a committed restart', async () => {
+  const ready = { ...idle, status: 'ready', target: 'this-mac' };
+  mock.status.mockResolvedValue(ready);
+  mock.install.mockImplementation(async () => {
+    const preparing = { ...ready, status: 'preparing' };
+    mock.status.mockResolvedValue(preparing);
+    return preparing;
+  });
+  dispose = mountUpdateControls(document.body);
+  await page.getByText('Update ready', { exact: true }).click();
+  await page.getByRole('button', { name: 'Update this Mac', exact: true }).click();
+  await expect
+    .element(page.getByRole('button', { name: 'Checking readiness…', exact: true }))
+    .toBeDisabled();
+  expect(document.querySelector('.taixu-update')!.textContent).not.toContain('Restarting');
+  mock.status.mockResolvedValue({ ...ready, status: 'installing' });
+  await expect
+    .element(page.getByRole('button', { name: 'Restarting…', exact: true }))
+    .toBeDisabled();
+});

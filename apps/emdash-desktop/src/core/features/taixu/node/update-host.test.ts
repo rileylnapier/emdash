@@ -122,3 +122,20 @@ it('returns a definitive refusal over maintenance when activity starts before co
   expect(mock.launch).not.toHaveBeenCalled();
   expect(mock.release).toHaveBeenCalledOnce();
 });
+
+it('retains the staged bundle after a readiness refusal and verifies it again on retry', async () => {
+  await host.stage(release);
+  mock.hold.mockRejectedValueOnce(new Error('codex · local-task is working'));
+  await expect(host.prepare(release.build)).rejects.toThrow('local-task');
+  expect(mock.launch).not.toHaveBeenCalled();
+  expect(mock.quit).not.toHaveBeenCalled();
+  const lease = await host.prepare(release.build);
+  await host.commit(lease);
+  expect(mock.stage).toHaveBeenCalledOnce();
+  expect(mock.verify).toHaveBeenCalledWith(
+    '/unused-stage/Taixu.app',
+    '/Applications/Taixu.app',
+    release
+  );
+  expect(mock.launch).toHaveBeenCalledOnce();
+});

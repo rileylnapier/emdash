@@ -30,6 +30,10 @@ export function createUpdateCoordinator({
   let abort = new AbortController();
   let disposed = false;
   let readySource: string | null | undefined;
+  // A lost commit reply must be reconciled by observing the build, never replayed.
+  const unconfirmedStudioBuilds = new Map<string, string>();
+  const updateTarget = (local: boolean, studio: boolean): TaixuUpdateState['target'] =>
+    local && studio ? 'both' : studio ? 'studio' : 'this-mac';
   const status = () => ({ ...state, hold: getUpdateHold() });
   const start = (fn: (signal: AbortSignal) => Promise<void>) => {
     if (pending || disposed) return;
@@ -48,6 +52,7 @@ export function createUpdateCoordinator({
     state = {
       ...state,
       status: 'checking',
+      target: undefined,
       remote: !!id,
       message: 'Checking for a Taixu release…',
     };
@@ -101,11 +106,20 @@ export function createUpdateCoordinator({
       if (source() !== id)
         throw new Error('The selected computer changed. Check for updates again.');
       readySource = id;
+      const localUpdate = release.build !== host.build;
+      const studioUpdate = !!remote && info.build !== release.build;
       state = {
         ...state,
         status: 'ready',
         progress: 100,
-        message: 'Update ready. Restart when your team has finished its work.',
+        target: updateTarget(localUpdate, studioUpdate),
+        message: studioUpdate
+          ? localUpdate
+            ? 'Update ready for Studio and this Mac.'
+            : 'Update ready for Studio. This Mac is current.'
+          : id
+            ? 'Update ready for this Mac. Studio is current and its work will keep running.'
+            : 'Update ready for this Mac.',
       };
     } finally {
       peer?.close();
@@ -116,11 +130,12 @@ export function createUpdateCoordinator({
     const id = source();
     if (!release || readySource !== id)
       throw new Error('Check for updates on this computer first.');
-    state = { ...state, status: 'installing', message: 'Checking active work on both computers…' };
+    state = { ...state, status: 'preparing', message: 'Checking which computers need updating…' };
     let peer: UpdatePeer | undefined;
     let localLease: string | undefined;
     let remoteLease: string | undefined;
     let remoteCommitted = false;
+    let checkingComputer = id ? 'Studio connection' : 'This Mac';
     try {
       peer = id ? await openPeer(id, signal) : undefined;
       const remote = peer
@@ -128,21 +143,51 @@ export function createUpdateCoordinator({
         : undefined;
       const info = remote ? await remote.info() : undefined;
       signal.throwIfAborted();
-      localLease = await host.prepare(release.build);
-      if (remote)
-        remoteLease = await remote.prepare({ build: release.build }, { timeoutMs: 120000 });
+      const localUpdate = host.build !== release.build;
+      const studioUpdate = !!remote && info?.build !== release.build;
+      state = { ...state, target: updateTarget(localUpdate, studioUpdate) };
+      const unconfirmedStudioBuild = id ? unconfirmedStudioBuilds.get(id) : undefined;
+      if (unconfirmedStudioBuild) {
+        if (info?.build !== unconfirmedStudioBuild)
+          throw new Error(
+            'The previous Studio restart is not confirmed. Reconnect to Studio, then retry.'
+          );
+        unconfirmedStudioBuilds.delete(id!);
+      }
+      if (localUpdate) {
+        checkingComputer = 'This Mac';
+        state = { ...state, message: 'Checking active work and unsaved files on this Mac…' };
+        localLease = await host.prepare(release.build);
+      }
       signal.throwIfAborted();
-      if (remote && info?.build !== release.build) {
-        state = { ...state, message: 'Restarting the Studio. Waiting for it to come back…' };
+      // A current Studio needs no reservation: its backend and tasks remain untouched.
+      if (remote && studioUpdate) {
+        checkingComputer = 'Studio';
+        state = { ...state, message: 'Checking active work and unsaved files on Studio…' };
+        remoteLease = await remote.prepare({ build: release.build }, { timeoutMs: 120000 });
+      }
+      signal.throwIfAborted();
+      if (remote && remoteLease) {
+        checkingComputer = 'Studio';
+        state = { ...state, message: 'Confirming Studio restart readiness…' };
         // A lost reply can mean the Studio already quit. Never replay commit.
         remoteCommitted = true;
+        unconfirmedStudioBuilds.set(id!, release.build);
         const result = await remote
-          .commit({ lease: remoteLease! }, { timeoutMs: 120000 })
+          .commit({ lease: remoteLease }, { timeoutMs: 120000 })
           .catch(() => undefined);
         if (result && !result.accepted) {
           remoteCommitted = false;
+          unconfirmedStudioBuilds.delete(id!);
           throw new Error(result.error ?? 'The Studio could not update.');
         }
+        state = {
+          ...state,
+          status: result?.accepted ? 'installing' : 'preparing',
+          message: result?.accepted
+            ? 'Restarting Studio. Waiting for it to come back…'
+            : 'Confirming the Studio update after losing its reply…',
+        };
         peer?.close();
         peer = undefined;
         let confirmed = false;
@@ -158,6 +203,7 @@ export function createUpdateCoordinator({
             }).info();
             if (next.build === release.build) {
               confirmed = true;
+              unconfirmedStudioBuilds.delete(id!);
               break;
             }
           } catch {
@@ -168,18 +214,35 @@ export function createUpdateCoordinator({
         }
         if (!confirmed)
           throw new Error(
-            'The Studio has not confirmed its new build. This Mac was left running. Reopen Taixu on the Studio, then check for updates.'
+            'The Studio has not confirmed its new build. This Mac was left running. Reopen Taixu on the Studio, then retry the update.'
           );
-      } else if (remoteLease && remote) {
-        await remote.cancel({ lease: remoteLease });
-        remoteLease = undefined;
       }
       signal.throwIfAborted();
-      state = {
-        ...state,
-        message: id ? 'Studio ready. Restarting this Mac’s Taixu…' : 'Restarting Taixu…',
-      };
-      await host.commit(localLease);
+      if (localLease) {
+        checkingComputer = 'This Mac';
+        state = {
+          ...state,
+          status: 'preparing',
+          message: 'Confirming this Mac’s restart readiness…',
+        };
+        await host.commit(localLease);
+        state = { ...state, status: 'installing', message: 'Restarting this Mac’s Taixu…' };
+      } else {
+        state = {
+          ...state,
+          status: 'idle',
+          release: null,
+          target: undefined,
+          message: id ? 'Both installations are current.' : 'Taixu is current.',
+        };
+      }
+    } catch (error) {
+      if (!signal.aborted && !disposed)
+        state = {
+          ...state,
+          status: 'blocked',
+          message: `${checkingComputer}: ${message(error)} The verified update is still ready. Retry when resolved.`,
+        };
     } finally {
       if (remoteLease && !remoteCommitted && peer)
         await client(maintenanceContract, peer.connection, { pathPrefix: 'taixuUpdateV1' })
@@ -190,7 +253,8 @@ export function createUpdateCoordinator({
     }
   }
   const checkNow = () => {
-    if (!['ready', 'installing', 'downloading'].includes(state.status)) start(check);
+    if (!['ready', 'blocked', 'preparing', 'installing', 'downloading'].includes(state.status))
+      start(check);
     return status();
   };
   const startup = setTimeout(checkNow, 30000);
@@ -199,7 +263,8 @@ export function createUpdateCoordinator({
     status,
     check: checkNow,
     install() {
-      if (state.status !== 'ready') throw new Error('Wait for the update to finish downloading.');
+      if (!['ready', 'blocked'].includes(state.status))
+        throw new Error('Wait for the update to finish downloading.');
       start(install);
       return status();
     },
@@ -211,6 +276,7 @@ export function createUpdateCoordinator({
         ...state,
         status: 'idle',
         release: null,
+        target: undefined,
         progress: 0,
         message: 'Computer changed. Check for updates again.',
       };

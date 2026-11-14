@@ -3,10 +3,10 @@ import { mkdtemp, lstat, mkdir, rm, symlink, readFile } from 'node:fs/promises';
 import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
-import type { SshServiceHandle } from '@core/manifests/node/ssh-service-handle';
 import { connect, streamTransport, type Controller } from '@emdash/wire/rpc';
 import { createTestWire } from '@emdash/wire/testing';
 import { afterEach, expect, it, vi } from 'vitest';
+import type { SshServiceHandle } from '@core/manifests/node/ssh-service-handle';
 import { studioControlContract } from '../api/studio-contract';
 import { proxyStudioHttp } from './studio-http';
 import { routeStudioDesktop } from './studio-routing';
@@ -286,4 +286,90 @@ it('allows versioned update maintenance across a build mismatch while keeping de
   expect(maintenance).toHaveBeenCalledWith('info', undefined, expect.anything());
   await expect(connection.call('tasks.create', {})).rejects.toThrow(/same Taixu build/);
   expect(desktop).not.toHaveBeenCalled();
+});
+
+it('reopens the saved Studio with the matching build after laptop replacement while Studio work continues', async () => {
+  const root = await folder();
+  const remoteHttp = await origin();
+  const socketPath = path.join(root, 'desktop.sock');
+  // Simulated backend-owned work: no provider, model or child process is invoked.
+  const task = { id: 'studio-task', status: 'working', ticks: 0 };
+  const running = setInterval(() => {
+    task.ticks++;
+  }, 10);
+  cleanups.push(async () => clearInterval(running));
+  const remoteCall = vi.fn(async (method: string) => {
+    if (method === 'taixu.connect') return { url: remoteHttp.url, error: null };
+    if (method === 'taixu.taskExists') return task.status === 'working';
+    throw new Error(`Unexpected backend mutation: ${method}`);
+  });
+  const server = await serveStudioSocket(controller(remoteCall), socketPath, 'target-build');
+  cleanups.push(() => server.dispose());
+  const proxy = {
+    isConnected: true,
+    exec: vi.fn(async () => ({ stdout: 'studio-account\n', stderr: '', exitCode: 0 })),
+    forwardOutStreamLocal: vi.fn(async () => {
+      const socket = net.createConnection(socketPath);
+      await once(socket, 'connect');
+      return socket;
+    }),
+    openTcpChannel: vi.fn(async () => net.createConnection(remoteHttp.port, '127.0.0.1')),
+  };
+  const ssh = {
+    ssh: { connect: vi.fn(async () => {}) },
+    machines: { getMachines: async () => [{ id: 'studio', name: 'My Studio' }] },
+    manager: { getProxy: () => proxy },
+  } as unknown as SshServiceHandle;
+  let gateway: Controller | undefined;
+  async function laptop(build: string) {
+    const service = await createStudioService({
+      ssh,
+      hosts: { onInvalidate: () => () => {} },
+      local: controller(async () => 'local'),
+      userData: root,
+      build,
+      expose: (c) => {
+        gateway = c;
+        return async () => {
+          gateway = undefined;
+        };
+      },
+    });
+    const wire = createTestWire(studioControlContract, service.controller);
+    cleanups.push(() => service.dispose());
+    cleanups.push(() => wire.dispose());
+    return { service, wire };
+  }
+  const old = await laptop('old-build');
+  expect(await old.wire.client.connect({ id: 'studio' })).toMatchObject({
+    selected: 'studio',
+    connected: false,
+    error: expect.stringContaining('same Taixu build'),
+  });
+  expect(gateway).toBeUndefined();
+  const saved = await readFile(path.join(root, 'taixu-studio.json'), 'utf8');
+  await old.service.dispose();
+  expect(await readFile(path.join(root, 'taixu-studio.json'), 'utf8')).toBe(saved);
+  const tick = task.ticks;
+  await vi.waitFor(() => expect(task.ticks).toBeGreaterThan(tick));
+  const updated = await laptop('target-build');
+  expect(await updated.wire.client.status()).toMatchObject({
+    selected: 'studio',
+    connected: false,
+    error: null,
+  });
+  expect(await updated.wire.client.connect({ id: 'studio' })).toMatchObject({
+    selected: 'studio',
+    connected: true,
+  });
+  const desktop = await peerForController(gateway!);
+  expect(await desktop.call('taixu.taskExists', { projectId: 'project', taskId: task.id })).toBe(
+    true
+  );
+  expect(task.status).toBe('working');
+  expect(remoteCall.mock.calls.map(([method]) => method)).toEqual([
+    'taixu.connect',
+    'taixu.taskExists',
+  ]);
+  expect(await readFile(path.join(root, 'taixu-studio.json'), 'utf8')).toBe(saved);
 });
