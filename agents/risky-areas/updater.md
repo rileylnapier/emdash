@@ -163,6 +163,14 @@ from Studio and must not be used to infer laptop ownership. Attached SSH hosts a
 shut down by disconnecting the desktop. Preserve local Head, unsaved buffer, scheduled
 work and commit-time activity checks.
 
+An open conversation is not necessarily active work. A running TUI with a confirmed
+completed turn can remain open and resumable without blocking restart. Claude idle
+reminders must preserve the original completion evidence; newer input, permissions,
+unknown dialogs and missing lifecycle evidence still block. Do not infer readiness
+from terminal silence or the desktop conversation cache, and do not stop sessions to
+make readiness pass. Existing installations with overwritten completion state need
+genuine lifecycle evidence; never synthesize a Stop hook to bootstrap an update.
+
 `preparing` means readiness is being checked. `installing` is shown only after a restart
 commit is accepted. A refused readiness check becomes `blocked`, retains the staged
 verified release, and offers a direct install retry without downloading again. Periodic

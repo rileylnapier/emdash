@@ -93,8 +93,17 @@ export class TuiAgentStates {
       return;
     }
 
+    // These are reminders, not lifecycle transitions. In particular Claude sends
+    // idle_prompt after Stop. Keep the completion, reply and its original time so
+    // an open conversation stays resumable without blocking updates or followups.
+    // Advancing that time could incorrectly clear input typed since completion;
+    // clearing another state could hide a new turn or an outstanding approval.
+    if (event.informational) return;
+
+    // Unknown notifications may also require a decision. They cannot establish
+    // readiness; only a real lifecycle event can clear this state.
     const status =
-      event.notificationType && ATTENTION_NOTIFICATION_TYPES.has(event.notificationType)
+      !event.notificationType || ATTENTION_NOTIFICATION_TYPES.has(event.notificationType)
         ? 'awaiting-input'
         : 'idle';
     this.setStatus(conversationId, {

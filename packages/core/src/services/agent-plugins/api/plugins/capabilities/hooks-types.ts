@@ -35,6 +35,8 @@ export type CanonicalHookEvent =
       kind: 'status';
       type: 'start' | 'stop' | 'error' | 'notification';
       notificationType?: NotificationType;
+      /** Provider-classified reminder; must not change lifecycle state or freshness. */
+      informational?: boolean;
       title?: string;
       message?: string;
       lastAssistantMessage?: string;

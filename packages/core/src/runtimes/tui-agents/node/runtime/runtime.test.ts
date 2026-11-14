@@ -127,6 +127,12 @@ describe('TuiAgentsRuntime', () => {
           type: 'stop',
         });
         await clock.advanceBy(10);
+        runtime['agentStates'].applyCanonicalEvent('conversation-1', providerId, {
+          kind: 'status',
+          type: 'notification',
+          notificationType: 'idle_prompt',
+          informational: true,
+        });
         const before = spawner.processes[0]!.writes.length;
         const sending = runtime.sendFollowup(
           'conversation-1',
@@ -176,6 +182,13 @@ describe('TuiAgentsRuntime', () => {
           });
         if (state === 'draft') runtime.sendInput('conversation-1', 'my draft');
         if (state === 'stopped') await runtime.stopSession('conversation-1');
+        await clock.advanceBy(10);
+        runtime['agentStates'].applyCanonicalEvent('conversation-1', 'claude', {
+          kind: 'status',
+          type: 'notification',
+          notificationType: 'idle_prompt',
+          informational: true,
+        });
         const before = [...spawner.processes[0]!.writes];
         const result = await runtime.sendFollowup('conversation-1', 'Changes');
         expect(result.success && result.data.status === 'sent').toBe(false);

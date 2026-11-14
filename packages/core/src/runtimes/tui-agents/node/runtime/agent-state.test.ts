@@ -9,7 +9,7 @@ import {
 } from '#runtimes/tui-agents/node/state/live-models';
 import { TuiAgentStates } from './agent-state';
 
-function createTracker() {
+function createTracker(now = () => 1_000) {
   const sessionsLiveModel = createTuiSessionsLiveModel();
   const agentStatesLiveModel = createTuiAgentStatesLiveModel();
   const sessions = createTuiSessionsListModel(sessionsLiveModel);
@@ -19,7 +19,7 @@ function createTracker() {
   const tracker = new TuiAgentStates(
     sessions,
     agentStates,
-    () => 1_000,
+    now,
     onSessionIdChanged,
     onAgentStateChanged
   );
@@ -27,6 +27,85 @@ function createTracker() {
 }
 
 describe('TuiAgentStates', () => {
+  it.each(['idle_prompt', 'auth_success'] as const)(
+    'keeps the completed turn, reply and original freshness after an informational %s',
+    (notificationType) => {
+      const now = vi.fn(() => 1_000);
+      const { tracker, onAgentStateChanged } = createTracker(now);
+      tracker.applyCanonicalEvent('conv-1', 'claude', {
+        kind: 'status',
+        type: 'stop',
+        lastAssistantMessage: 'Implemented; tests pass.',
+      });
+      const completed = tracker.current('conv-1');
+      now.mockReturnValue(61_000);
+      tracker.applyCanonicalEvent('conv-1', 'claude', {
+        kind: 'status',
+        type: 'notification',
+        notificationType,
+        informational: true,
+        message: 'Claude is waiting for your input',
+      });
+      expect(tracker.current('conv-1')).toBe(completed);
+      expect(tracker.current('conv-1')).toMatchObject({
+        status: 'completed',
+        source: 'hook',
+        updatedAt: 1_000,
+        lastAssistantMessage: 'Implemented; tests pass.',
+      });
+      expect(onAgentStateChanged).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each(['working', 'permission_prompt', 'elicitation_dialog', 'error', 'unknown', 'missing'])(
+    'never lets an informational reminder clear %s',
+    (state) => {
+      const { tracker } = createTracker();
+      if (state === 'working' || state === 'error') {
+        tracker.applyCanonicalEvent('conv-1', 'claude', {
+          kind: 'status',
+          type: state === 'working' ? 'start' : 'error',
+        });
+      } else if (state === 'permission_prompt' || state === 'elicitation_dialog') {
+        tracker.applyCanonicalEvent('conv-1', 'claude', {
+          kind: 'status',
+          type: 'notification',
+          notificationType: state,
+        });
+      } else if (state === 'unknown') {
+        tracker.applyCanonicalEvent('conv-1', 'claude', {
+          kind: 'status',
+          type: 'notification',
+          message: 'A new kind of dialog',
+        });
+      }
+      const before = tracker.current('conv-1');
+      tracker.applyCanonicalEvent('conv-1', 'claude', {
+        kind: 'status',
+        type: 'notification',
+        notificationType: 'idle_prompt',
+        informational: true,
+      });
+      expect(tracker.current('conv-1')).toBe(before);
+    }
+  );
+
+  it('keeps other providers explicit idle transitions and fails closed on unknown notices', () => {
+    const { tracker } = createTracker();
+    tracker.applyCanonicalEvent('conv-1', 'kilocode', {
+      kind: 'status',
+      type: 'notification',
+      notificationType: 'idle_prompt',
+    });
+    expect(tracker.current('conv-1')?.status).toBe('awaiting-input');
+    tracker.applyCanonicalEvent('conv-2', 'claude', {
+      kind: 'status',
+      type: 'notification',
+      message: 'A new kind of dialog',
+    });
+    expect(tracker.current('conv-2')?.status).toBe('awaiting-input');
+  });
+
   it('maps canonical status hook events to agent state', () => {
     const { tracker, agentStates } = createTracker();
 
