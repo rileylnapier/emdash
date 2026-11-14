@@ -181,43 +181,96 @@ z.close()`,
   }
 );
 
-it.each(['success', 'move-failure', 'launch-failure', 'still-running'])(
-  'installer preserves the previous app: %s',
-  async (kind) => {
-    const root = await folder();
-    const installed = path.join(root, "Taixu's app");
-    const staged = path.join(root, 'next');
-    const backup = path.join(root, 'previous');
-    const receipt = path.join(root, 'receipt');
-    await mkdir(installed);
-    await writeFile(path.join(installed, 'version'), 'old');
-    if (kind !== 'move-failure') {
-      await mkdir(staged);
-      await writeFile(path.join(staged, 'version'), 'new');
-    }
-    const script = path.join(root, 'install.sh');
-    let source = installScript({
-      pid: kind === 'still-running' ? process.pid : 99999999,
-      installed,
-      staged,
-      backup,
-      receipt,
-    });
-    source = source.replaceAll(
-      '/usr/bin/open',
-      kind === 'launch-failure' ? '/usr/bin/false' : '/usr/bin/true'
-    );
-    if (kind === 'still-running') source = source.replace('"$n" -ge 60', '"$n" -ge 1');
-    await writeFile(script, source);
-    await exec('/bin/sh', [script]).catch(() => {});
-    expect(await readFile(path.join(installed, 'version'), 'utf8')).toBe(
-      kind === 'success' ? 'new' : 'old'
-    );
-    if (kind === 'success')
-      expect(await readFile(path.join(backup, 'version'), 'utf8')).toBe('old');
-    expect(await readFile(receipt, 'utf8')).toMatch(
-      kind === 'success' ? /installed/ : kind === 'still-running' ? /did not quit/ : /restored/
-    );
-    await expect(readFile(script)).rejects.toThrow();
+it.each([
+  'success',
+  'move-failure',
+  'journal-failure-after-backup',
+  'launch-failure',
+  'still-running',
+  'backup-conflict',
+  'wrong-build',
+  'startup-confirmed',
+])('installer preserves the previous app and records the exact attempt: %s', async (kind) => {
+  const root = await folder();
+  const installed = path.join(root, "Taixu's app");
+  const staged = path.join(root, 'stage/next');
+  const backup = path.join(root, 'previous');
+  const receipt = path.join(root, 'receipt');
+  const stateFile = path.join(root, 'state.json');
+  for (const [bundle, build] of [
+    [installed, 'old'],
+    [staged, 'new'],
+  ]) {
+    await mkdir(path.join(bundle!, 'Contents/Resources'), { recursive: true });
+    await writeFile(path.join(bundle!, 'Contents/Resources/taixu-build.txt'), build!);
   }
-);
+  if (kind === 'backup-conflict') {
+    await mkdir(backup);
+    await writeFile(path.join(backup, 'keep'), 'older rollback');
+  }
+  await writeFile(receipt, 'Update installed: a different, older attempt');
+  const script = path.join(root, 'install.sh');
+  let source = installScript({
+    pid: kind === 'still-running' ? process.pid : 99999999,
+    installed,
+    staged,
+    backup,
+    receipt,
+    stateFile,
+    attempt: 'current-attempt',
+    build: kind === 'wrong-build' ? 'wrong' : 'new',
+    fromBuild: 'old',
+  });
+  source = source.replaceAll(
+    '/usr/bin/open',
+    kind === 'launch-failure' ? '/usr/bin/false' : '/usr/bin/true'
+  );
+  if (kind === 'still-running') source = source.replace('"$n" -ge 60', '"$n" -ge 1');
+  if (kind === 'move-failure')
+    source = source.replace(
+      'if ! /bin/mv "$staged" "$installed"; then',
+      'if ! /usr/bin/false; then'
+    );
+  if (kind === 'journal-failure-after-backup')
+    source = source.replace('record replacing null', 'phase=replacing\n/usr/bin/false');
+  if (kind === 'startup-confirmed') {
+    // Simulate the new process confirming before open returns.
+    source = source.replace(
+      'if ! /usr/bin/true "$installed"; then',
+      `if ! /usr/bin/printf '{"phase":"confirmed"}\\n' > "$state_file"; then`
+    );
+  }
+  await writeFile(script, source);
+  const result = await exec('/bin/sh', [script]).then(
+    () => 'ok',
+    () => 'failed'
+  );
+  expect(result).toBe(['success', 'startup-confirmed'].includes(kind) ? 'ok' : 'failed');
+  const buildAt = (bundle: string) =>
+    readFile(path.join(bundle, 'Contents/Resources/taixu-build.txt'), 'utf8');
+  expect(await buildAt(installed)).toBe(
+    ['success', 'startup-confirmed'].includes(kind) ? 'new' : 'old'
+  );
+  const state = JSON.parse(await readFile(stateFile, 'utf8'));
+  const phase =
+    kind === 'still-running'
+      ? 'waiting-for-exit'
+      : ['backup-conflict', 'wrong-build'].includes(kind)
+        ? 'backing-up'
+        : ['move-failure', 'journal-failure-after-backup'].includes(kind)
+          ? 'replacing'
+          : kind === 'startup-confirmed'
+            ? 'confirmed'
+            : 'awaiting-startup';
+  expect(state.phase).toBe(phase);
+  if (kind === 'success') {
+    expect(await buildAt(backup)).toBe('old');
+    expect(state.error).toBeNull();
+  } else if (kind !== 'startup-confirmed') expect(state.error).toBeTypeOf('string');
+  expect(await readFile(receipt, 'utf8')).toContain('current-attempt');
+  expect(await readFile(receipt, 'utf8')).not.toContain('Update installed');
+  if (kind === 'backup-conflict')
+    expect(await readFile(path.join(backup, 'keep'), 'utf8')).toBe('older rollback');
+  if (kind === 'still-running') expect(() => process.kill(process.pid, 0)).not.toThrow();
+  await expect(readFile(script)).rejects.toThrow();
+});

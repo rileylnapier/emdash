@@ -46,6 +46,13 @@
   for task values: their arguments are visible too, and `-e` needs tmux 3.2 and fails beyond
   tmux's command size limit.
 - confirm renderer event flow if hook/plugin payload or agent status behavior changes
+- Claude's explicit `notification_type` owns notification classification. Its delayed
+  `idle_prompt` and `auth_success` are informational: retain the last lifecycle event,
+  assistant reply and original timestamp, while still tracking provider session IDs.
+  Never turn these reminders into `awaiting-input` or refresh completion freshness;
+  that would either block finished conversations or hide newer drafts/approvals.
+  Unknown dialogs remain attention states. Other providers may use `idle_prompt` as
+  a lifecycle transition, so this classification belongs in the Claude plugin.
 - a Git credential channel handed in with a start request belongs to the session runtime from
   the moment the request arrives, queued or not: hold it for the session that spawns with it,
   release it once nothing holds it and no start carrying it is pending, and release it when

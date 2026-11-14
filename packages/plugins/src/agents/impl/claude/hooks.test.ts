@@ -56,8 +56,62 @@ describe('claude hooks', () => {
       kind: 'status',
       type: 'notification',
       notificationType: 'idle_prompt',
+      informational: true,
       message: 'Claude is waiting for your input',
       providerSessionId: RESUMED_SESSION_ID,
+    });
+  });
+
+  it.each(['idle_prompt', 'auth_success'])(
+    'classifies explicit %s as a reminder without guessing from its prose',
+    (notificationType) => {
+      expect(
+        parse('notification', {
+          notification_type: notificationType,
+          message: 'A translated message mentioning approval',
+          session_id: RESUMED_SESSION_ID,
+        })
+      ).toMatchObject({
+        kind: 'status',
+        type: 'notification',
+        notificationType,
+        informational: true,
+        providerSessionId: RESUMED_SESSION_ID,
+      });
+    }
+  );
+
+  it.each(['permission_prompt', 'elicitation_dialog'])(
+    'preserves explicit %s even when the message looks idle',
+    (notificationType) => {
+      const event = parse('notification', {
+        notification_type: notificationType,
+        message: 'Claude is waiting for your input',
+      });
+      expect(event).toMatchObject({ kind: 'status', type: 'notification', notificationType });
+      expect(event).not.toHaveProperty('informational');
+    }
+  );
+
+  it('does not guess that unknown types or unrecognized legacy messages are idle', () => {
+    for (const body of [
+      { notification_type: 'future_dialog', message: 'Claude is waiting for your input' },
+      { message: 'Please choose an option' },
+      {},
+    ]) {
+      const event = parse('notification', body);
+      expect(event).toMatchObject({ kind: 'status', type: 'notification' });
+      expect(event).not.toHaveProperty('informational');
+      expect(event.kind === 'status' && event.notificationType).toBeUndefined();
+    }
+  });
+
+  it('recognizes legacy permission messages without making them informational', () => {
+    expect(parse('notification', { message: 'Claude needs your permission' })).toEqual({
+      kind: 'status',
+      type: 'notification',
+      notificationType: 'permission_prompt',
+      message: 'Claude needs your permission',
     });
   });
 

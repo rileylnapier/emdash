@@ -200,4 +200,26 @@ describe('AgentStatusService', () => {
     await Promise.all([pending, disposal]);
     expect(disposed).toBe(true);
   });
+
+  it('projects unknown notifications as needing attention instead of leaving a completed cache', async () => {
+    const service = new AgentStatusService();
+    mocks.updateRows.push(row(), row());
+
+    await service.cacheSignal(signal('stop'));
+    await service.cacheSignal(
+      signal('notification', {
+        timestamp: 2,
+        payload: { message: 'Please choose an option' },
+      })
+    );
+
+    expect(mocks.updateCalls.map((call) => call.agentStatus)).toEqual([
+      'completed',
+      'awaiting-input',
+    ]);
+    expect(mocks.emit).toHaveBeenLastCalledWith(
+      undefined,
+      expect.objectContaining({ status: 'awaiting-input' })
+    );
+  });
 });

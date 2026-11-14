@@ -1,7 +1,17 @@
+import type * as NodeFs from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { createTestWire } from '@emdash/wire/testing';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { maintenanceContract } from '../api/update-contract';
 import { createUpdateHost } from './update-host';
+import {
+  readReadyUpdate,
+  readUpdateAttempt,
+  beginUpdateAttempt,
+  setUpdatePhase,
+} from './update-journal';
 const mock = vi.hoisted(() => ({
   idle: vi.fn(),
   stage: vi.fn(),
@@ -12,12 +22,25 @@ const mock = vi.hoisted(() => ({
   mark: vi.fn(),
   quit: vi.fn(),
   relaunch: vi.fn(),
+  diskBuild: vi.fn(),
+  diskPath: vi.fn(),
 }));
+vi.mock('node:fs/promises', async (original) => {
+  const fs = await original<typeof NodeFs>();
+  return {
+    ...fs,
+    realpath: (p: string) => (p === '/Applications/Taixu.app' ? mock.diskPath() : fs.realpath(p)),
+    readFile: (p: string, ...args: unknown[]) =>
+      p === '/Applications/Taixu.app/Contents/Resources/taixu-build.txt'
+        ? mock.diskBuild()
+        : Reflect.apply(fs.readFile, fs, [p, ...args]),
+  };
+});
 vi.mock('electron', () => ({
   app: { isPackaged: true, quit: mock.quit, relaunch: mock.relaunch },
 }));
 vi.mock('./update-files', () => ({
-  updateRoot: () => '/unused',
+  updateRoot: (root: string) => root,
   readRelease: vi.fn(),
   readChunk: vi.fn(),
   stageRelease: mock.stage,
@@ -40,20 +63,27 @@ const release = {
 };
 let host: ReturnType<typeof createUpdateHost>;
 const resources = process.resourcesPath;
-beforeEach(() => {
+let root: string;
+const executable = process.execPath;
+beforeEach(async () => {
   vi.useFakeTimers();
   vi.resetAllMocks();
+  mock.diskPath.mockResolvedValue('/Applications/Taixu.app');
+  mock.diskBuild.mockResolvedValue('old');
   Object.defineProperty(process, 'resourcesPath', {
     configurable: true,
     value: '/Applications/Taixu.app/Contents/Resources',
   });
   mock.stage.mockResolvedValue({ directory: '/unused-stage', bundle: '/unused-stage/Taixu.app' });
   mock.hold.mockResolvedValue(mock.release);
-  host = createUpdateHost('/unused', 'old', mock.idle);
+  root = await mkdtemp(path.join(os.tmpdir(), 'taixu-host-'));
+  host = createUpdateHost(root, 'old', mock.idle);
 });
 afterEach(async () => {
   await host.dispose();
+  await rm(root, { recursive: true, force: true });
   Object.defineProperty(process, 'resourcesPath', { configurable: true, value: resources });
+  Object.defineProperty(process, 'execPath', { configurable: true, value: executable });
   vi.useRealTimers();
 });
 it('expires a prepared lease and prevents stale commits', async () => {
@@ -76,7 +106,7 @@ it('freezes a lease through commit verification and cancels safely on verificati
   );
   const committing = host.commit(lease);
   const rejected = expect(committing).rejects.toThrow('bad signer');
-  await vi.advanceTimersByTimeAsync(0);
+  await vi.waitFor(() => expect(mock.verify).toHaveBeenCalledOnce());
   await host.cancel(lease);
   await vi.advanceTimersByTimeAsync(600001);
   expect(mock.release).not.toHaveBeenCalled();
@@ -96,6 +126,7 @@ it('rejects concurrent stages, and only quits after installer dispatch', async (
   );
   const staging = host.stage(release);
   await expect(host.stage(release)).rejects.toThrow(/already/);
+  await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
   finish({ directory: '/unused', bundle: '/unused/Taixu.app' });
   await staging;
   const lease = await host.prepare(release.build);
@@ -138,4 +169,99 @@ it('retains the staged bundle after a readiness refusal and verifies it again on
     release
   );
   expect(mock.launch).toHaveBeenCalledOnce();
+});
+
+it('persists a readiness failure and restores its release in a new host', async () => {
+  await host.stage(release, path.join(root, 'download'), 'studio');
+  mock.hold.mockRejectedValueOnce(new Error('codex · local-task is working'));
+  await expect(host.prepare(release.build)).rejects.toThrow('local-task');
+  expect(await readUpdateAttempt(root)).toMatchObject({
+    phase: 'checking-work',
+    error: 'codex · local-task is working',
+  });
+  expect(await readReadyUpdate(root)).toMatchObject({
+    release,
+    cache: 'download',
+    source: 'studio',
+  });
+  await host.dispose();
+  host = createUpdateHost(root, 'old', mock.idle);
+  const lease = await host.prepare(release.build);
+  expect(mock.stage).toHaveBeenLastCalledWith(
+    path.join(root, 'download'),
+    '/Applications/Taixu.app',
+    release
+  );
+  await host.commit(lease);
+  expect(await readUpdateAttempt(root)).toMatchObject({ phase: 'starting-installer', error: null });
+});
+
+it('records the failing verification phase without dispatching or quitting', async () => {
+  await host.stage(release);
+  const lease = await host.prepare(release.build);
+  mock.verify.mockRejectedValue(new Error('bad signer'));
+  await expect(host.commit(lease)).rejects.toThrow('bad signer');
+  expect(await readUpdateAttempt(root)).toMatchObject({ phase: 'verifying', error: 'bad signer' });
+  expect(mock.quit).not.toHaveBeenCalled();
+  expect(mock.launch).not.toHaveBeenCalled();
+});
+
+it('never treats a legacy success receipt as confirmation of an interrupted attempt', async () => {
+  await host.stage(release);
+  const id = await beginUpdateAttempt(root, 'old', release);
+  await setUpdatePhase(root, id, 'awaiting-startup');
+  await writeFile(
+    path.join(root, 'install-result.txt'),
+    'Update installed. Previous app retained.'
+  );
+  expect((await host.recover()).attempt).toMatchObject({ id, phase: 'awaiting-startup' });
+  expect(await readFile(path.join(root, 'install-result.txt'), 'utf8')).toContain(
+    'Update installed'
+  );
+});
+
+it.each(['matching', 'old-running', 'old-installed', 'different-copy', 'bad-signature'])(
+  'confirms startup only for the verified target in /Applications: %s',
+  async (kind) => {
+    mock.diskBuild.mockResolvedValue(release.build);
+    const id = await beginUpdateAttempt(root, 'old', release);
+    await setUpdatePhase(root, id, 'awaiting-startup');
+    Object.defineProperty(process, 'execPath', {
+      configurable: true,
+      value:
+        kind === 'different-copy'
+          ? '/tmp/Taixu.app/Contents/MacOS/Taixu'
+          : '/Applications/Taixu.app/Contents/MacOS/Taixu',
+    });
+    if (kind === 'old-installed') mock.diskBuild.mockResolvedValue('old');
+    if (kind === 'bad-signature') mock.verify.mockRejectedValue(new Error('bad signer'));
+    await host.dispose();
+    host = createUpdateHost(root, kind === 'old-running' ? 'old' : release.build, mock.idle);
+    if (['old-installed', 'different-copy', 'bad-signature'].includes(kind))
+      await expect(host.recover()).rejects.toThrow();
+    else await host.recover();
+    expect(await readUpdateAttempt(root)).toMatchObject({
+      id,
+      phase: kind === 'matching' ? 'confirmed' : 'awaiting-startup',
+    });
+    expect(mock.launch).not.toHaveBeenCalled();
+    expect(mock.quit).not.toHaveBeenCalled();
+  }
+);
+
+it('does not restage or retry while an earlier installer is still alive', async () => {
+  const id = await beginUpdateAttempt(root, 'old', release);
+  await writeFile(
+    path.join(root, 'attempts', id, 'state.json'),
+    JSON.stringify({
+      phase: 'waiting-for-exit',
+      error: null,
+      installerPid: process.pid,
+      updatedAt: new Date().toISOString(),
+    })
+  );
+  await expect(host.stage(release)).rejects.toThrow('still running');
+  await expect(host.prepare(release.build)).rejects.toThrow('still running');
+  expect(mock.stage).not.toHaveBeenCalled();
+  expect(mock.launch).not.toHaveBeenCalled();
 });

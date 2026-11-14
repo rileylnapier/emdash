@@ -102,6 +102,11 @@ it.each(['idle', 'completed'])(
 it.each([
   ['working', { ...completed, status: 'working' }],
   ['permission', { ...completed, status: 'awaiting-input', notificationType: 'permission_prompt' }],
+  [
+    'elicitation',
+    { ...completed, status: 'awaiting-input', notificationType: 'elicitation_dialog' },
+  ],
+  ['unknown dialog', { ...completed, status: 'awaiting-input' }],
   ['notification', { ...completed, status: 'idle', notificationType: 'auth_success' }],
   ['error', { ...completed, status: 'error' }],
   ['input inference', { ...completed, source: 'input' }],
@@ -153,6 +158,30 @@ it('blocks a starting TUI even with a completed signal, and allows an exited ses
       hosts
     )
   ).resolves.toBeUndefined();
+});
+
+it('allows many completed open conversations without stopping them, but still protects one new draft', async () => {
+  const tui = Object.fromEntries(
+    Array.from({ length: 50 }, (_, i) => {
+      const conversationId = `task-${i}`;
+      return [conversationId, { ...session, conversationId }];
+    })
+  );
+  const agents = Object.fromEntries(
+    Object.keys(tui).map((conversationId) => [
+      conversationId,
+      { ...completed, conversationId, lastAssistantMessage: 'Done.' },
+    ])
+  );
+  const runtime = broker(null, {}, { tui, agents });
+  await expect(assertUpdateActivityIdle(runtime, hosts)).resolves.toBeUndefined();
+  expect(Object.values(tui).every((s) => s.status === 'running')).toBe(true);
+  expect(Object.values(agents).every((a) => a.lastAssistantMessage === 'Done.')).toBe(true);
+
+  // Informational notifications retain the original completion timestamp. They
+  // cannot make a draft typed after it look like a completed subsequent turn.
+  tui['task-49'].lastInputAt = 301;
+  await expect(assertUpdateActivityIdle(runtime, hosts)).rejects.toThrow(/taixu-updates/);
 });
 
 it('allows ready and closed ACP sessions with no outstanding work', async () => {

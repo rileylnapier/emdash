@@ -48,7 +48,7 @@ function deriveAgentStatus(event: AgentStatusSignal): AgentStatus | null {
   if (event.type === 'error') return 'error';
   if (event.type === 'notification') {
     const nt = event.payload.notificationType;
-    if (!nt) return null;
+    if (!nt) return 'awaiting-input';
     if (isAttentionNotification(nt)) return 'awaiting-input';
   }
   return null;

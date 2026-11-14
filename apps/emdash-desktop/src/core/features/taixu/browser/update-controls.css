@@ -75,7 +75,18 @@
   padding: 32px;
   font: 16px/1.6 system-ui;
   margin: auto;
+  max-width: min(600px, 90vw);
+  max-height: 80vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .taixu-update-hold::backdrop {
   background: #0e1328df;
+}
+
+.taixu-update-panel pre {
+  font: 11px/1.6 monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }

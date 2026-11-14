@@ -39,6 +39,7 @@ it('shows release notes as text and requires an explicit click to install from r
     ...idle,
     status: 'ready',
     message: 'Ready',
+    target: 'both',
     release: { notes: '<img src=x onerror=alert(1)> New buildings' },
   };
   mock.status.mockResolvedValue(ready);
@@ -142,4 +143,23 @@ it('shows Restarting only after a preparing response advances to a committed res
   await expect
     .element(page.getByRole('button', { name: 'Restarting…', exact: true }))
     .toBeDisabled();
+});
+
+it('shows the attempt diagnostics as text and checks unknown computers on retry', async () => {
+  const blocked = {
+    ...idle,
+    status: 'blocked',
+    diagnostics: 'Computer: Laptop\nAttempt: latest\nPhase: replacing\n<img src=x>',
+    message: 'The saved update is verified.',
+  };
+  mock.status.mockResolvedValue(blocked);
+  mock.install.mockResolvedValue({ ...blocked, status: 'preparing' });
+  dispose = mountUpdateControls(document.body);
+  await page.getByText('Update ready', { exact: true }).click();
+  await page.getByText('Install details', { exact: true }).click();
+  await expect.element(page.getByText(blocked.diagnostics, { exact: true })).toBeVisible();
+  expect(document.querySelector('.taixu-update img')).toBeNull();
+  await page.getByRole('button', { name: 'Retry · Check and update', exact: true }).click();
+  expect(mock.install).toHaveBeenCalledOnce();
+  expect(mock.check).not.toHaveBeenCalled();
 });

@@ -29,6 +29,11 @@ export function mountUpdateControls(parent: HTMLElement) {
   const notes = document.createElement('p');
   notes.className = 'taixu-release-notes';
   const explanation = document.createElement('p');
+  const diagnostic = document.createElement('details');
+  const diagnosticSummary = document.createElement('summary');
+  diagnosticSummary.textContent = 'Install details';
+  const diagnosticText = document.createElement('pre');
+  diagnostic.append(diagnosticSummary, diagnosticText);
   const button = document.createElement('button');
   button.type = 'button';
   button.textContent = 'Check for updates';
@@ -39,7 +44,7 @@ export function mountUpdateControls(parent: HTMLElement) {
     details.open = false;
     summary.focus();
   };
-  panel.append(title, message, progress, notes, explanation, button, close);
+  panel.append(title, message, progress, notes, explanation, diagnostic, button, close);
   details.append(summary, panel);
   parent.append(details);
   let disposed = false;
@@ -88,7 +93,13 @@ export function mountUpdateControls(parent: HTMLElement) {
             : next.status === 'preparing'
               ? 'Checking readiness…'
               : 'Updates';
+    overlay.textContent =
+      next.status === 'error'
+        ? `${next.message}\n${next.diagnostics ?? ''}`
+        : 'Checking this Mac’s readiness. Saving your place…';
     message.textContent = next.message;
+    diagnostic.hidden = !next.diagnostics;
+    diagnosticText.textContent = next.diagnostics ?? '';
     progress.hidden = next.status !== 'downloading';
     progress.value = next.progress;
     notes.hidden = !next.release?.notes;
@@ -108,7 +119,9 @@ export function mountUpdateControls(parent: HTMLElement) {
         ? 'Update this Mac'
         : next.target === 'studio'
           ? 'Update Studio'
-          : 'Update both Macs';
+          : next.target === 'both'
+            ? 'Update both Macs'
+            : 'Check and update';
     button.textContent =
       next.status === 'ready'
         ? updateLabel

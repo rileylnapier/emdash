@@ -209,7 +209,18 @@ export async function stageRelease(root: string, installed: string, release: Tai
   await verifyArchive(zip, release);
   const directory = path.join('/Applications', `.Taixu-update-${process.getuid?.()}`);
   await privateDirectory(directory);
-  await removeUpdateDirectory(path.join(directory, 'Taixu.app'));
+  const existing = path.join(directory, 'Taixu.app');
+  // Reuse a verified extraction after an interrupted launch; the cached archive
+  // was checked above and commit verifies the signature again.
+  try {
+    if ((await realpath(existing)) === existing) {
+      await verifyBundle(existing, installed, release);
+      return { directory, bundle: existing };
+    }
+  } catch {
+    /* Missing or invalid staging is rebuilt from the verified archive. */
+  }
+  await removeUpdateDirectory(existing);
   try {
     const bundle = await extractRelease(zip, directory);
     await verifyBundle(bundle, installed, release);
@@ -229,66 +240,138 @@ export function installScript({
   staged,
   backup,
   receipt,
+  stateFile,
+  attempt,
+  build,
+  fromBuild,
 }: {
   pid: number;
   installed: string;
   staged: string;
   backup: string;
   receipt: string;
+  stateFile: string;
+  attempt: string;
+  build: string;
+  fromBuild: string;
 }) {
   if (!Number.isSafeInteger(pid) || pid <= 1) throw new Error('Invalid app process.');
   return `#!/bin/sh
 set -eu
-trap '/bin/rm -f -- "$0"' EXIT
+umask 077
 installed=${quote(installed)}
 staged=${quote(staged)}
 backup=${quote(backup)}
 receipt=${quote(receipt)}
+state_file=${quote(stateFile)}
+build=${quote(build)}
+from_build=${quote(fromBuild)}
+attempt=${quote(attempt)}
+phase=waiting-for-exit
+failure='Installer stopped unexpectedly; inspect the attempt log before retrying.'
+record() {
+  phase="$1"
+  /usr/bin/printf '{"phase":"%s","error":%s,"installerPid":%s,"updatedAt":"%s"}\\n' "$phase" "$2" "$$" "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)" > "$state_file.tmp"
+  /bin/mv -f "$state_file.tmp" "$state_file"
+  /usr/bin/printf 'Attempt %s — build %s — %s — %s\\n' "$attempt" "$build" "$phase" "$2" > "$receipt"
+}
+finish() {
+  code=$?
+  set +e
+  if [ "$code" -ne 0 ]; then
+    # If journaling or the second move fails after retaining the old app,
+    # put it back without overwriting any installed bundle.
+    if [ ! -e "$installed" ] && [ ! -L "$installed" ] && [ -d "$backup" ]; then
+      /bin/mv "$backup" "$installed"
+    fi
+    record "$phase" "\\"$failure\\""
+    /usr/bin/printf '%s\\n' "$failure" >&2
+  fi
+  /bin/rm -f -- "$0"
+  exit "$code"
+}
+trap finish EXIT
+record waiting-for-exit null
 n=0
 while /bin/kill -0 ${pid} 2>/dev/null; do
   n=$((n + 1))
-  if [ "$n" -ge 60 ]; then echo 'Taixu did not quit. The update was not installed.' > "$receipt"; exit 1; fi
+  if [ "$n" -ge 60 ]; then failure='Taixu did not quit. The update was not installed.'; exit 1; fi
   /bin/sleep 1
 done
-[ ! -e "$backup" ] || exit 1
+record backing-up null
+failure='Could not retain the installed app. No replacement was attempted.'
+[ ! -e "$backup" ]
+[ ! -L "$backup" ]
+[ -d "$installed" ]
+[ ! -L "$installed" ]
+[ -d "$staged" ]
+[ ! -L "$staged" ]
+[ "$(/bin/cat "$installed/Contents/Resources/taixu-build.txt")" = "$from_build" ]
+[ "$(/bin/cat "$staged/Contents/Resources/taixu-build.txt")" = "$build" ]
 /bin/mv "$installed" "$backup"
+failure='Replacement failed; the previous app is in the attempt backup.'
+record replacing null
 if ! /bin/mv "$staged" "$installed"; then
   /bin/mv "$backup" "$installed"
-  echo 'Installation failed; the previous app was restored.' > "$receipt"
-  /usr/bin/open "$installed"
+  failure='Installation failed; the previous app was restored.'
+  /usr/bin/open "$installed" || true
   exit 1
 fi
+# Write before open: the new process may confirm startup immediately. Never
+# overwrite its confirmation or infer success from LaunchServices accepting open.
+record awaiting-startup null
+failure='Launch failed; the previous app is in the attempt backup.'
 if ! /usr/bin/open "$installed"; then
   /bin/mv "$installed" "$staged"
   /bin/mv "$backup" "$installed"
-  echo 'Launch failed; the previous app was restored.' > "$receipt"
-  /usr/bin/open "$installed"
+  failure='Launch failed; the previous app was restored.'
+  /usr/bin/open "$installed" || true
   exit 1
 fi
 /bin/rmdir -- "$(/usr/bin/dirname "$staged")" 2>/dev/null || true
-echo 'Update installed. Previous app retained in /Applications/.Taixu-previous.' > "$receipt"
 `;
 }
 
-export async function launchInstaller(root: string, installed: string, staged: string) {
-  const script = path.join(root, `install-${randomUUID()}.sh`);
+export async function launchInstaller(
+  root: string,
+  installed: string,
+  staged: string,
+  attempt: { id: string; directory: string; build: string; fromBuild: string }
+) {
+  const script = path.join(attempt.directory, 'install.sh');
   const backupDir = path.join('/Applications', '.Taixu-previous');
   await privateDirectory(backupDir);
+  // Never delete a rollback while preparing another install. Each attempt owns
+  // a distinct backup; an older receipt cannot describe this installation.
+  const backupRoot = path.join(backupDir, attempt.id);
+  await privateDirectory(backupRoot);
   await privateDirectory(root);
-  const backup = path.join(backupDir, 'Taixu.app');
-  // Remove only our previous rollback bundle, after the new bundle has verified.
-  await removeUpdateDirectory(backup);
+  const backup = path.join(backupRoot, 'Taixu.app');
   const receipt = path.join(root, 'install-result.txt');
-  await rm(receipt, { force: true });
-  await writeFile(receipt, 'Waiting for Taixu to quit.\n', { mode: 0o600, flag: 'wx' });
-  await writeFile(script, installScript({ pid: process.pid, installed, staged, backup, receipt }), {
-    mode: 0o700,
-    flag: 'wx',
-  });
-  const child = spawn('/bin/sh', [script], { detached: true, stdio: 'ignore' });
-  await new Promise<void>((resolve, reject) => {
-    child.once('spawn', resolve);
-    child.once('error', reject);
-  });
-  child.unref();
+  await writeFile(
+    script,
+    installScript({
+      pid: process.pid,
+      installed,
+      staged,
+      backup,
+      receipt,
+      stateFile: path.join(attempt.directory, 'state.json'),
+      attempt: attempt.id,
+      build: attempt.build,
+      fromBuild: attempt.fromBuild,
+    }),
+    { mode: 0o700, flag: 'wx' }
+  );
+  const log = await open(path.join(attempt.directory, 'installer.log'), 'ax', 0o600);
+  try {
+    const child = spawn('/bin/sh', [script], { detached: true, stdio: ['ignore', log.fd, log.fd] });
+    await new Promise<void>((resolve, reject) => {
+      child.once('spawn', resolve);
+      child.once('error', reject);
+    });
+    child.unref();
+  } finally {
+    await log.close();
+  }
 }

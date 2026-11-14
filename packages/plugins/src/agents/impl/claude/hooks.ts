@@ -11,10 +11,8 @@ import {
 export const CLAUDE_SETTINGS_PATH = 'settings.json';
 
 /**
- * Claude's Notification events carry no `notification_type` field.
- * Classify by examining the message text:
- *   /permission|approval/i → permission_prompt
- *   everything else        → idle_prompt (agent waiting / done)
+ * Honor Claude's notification_type. Older versions omitted it: recognize their
+ * permission and idle messages, but never guess that an unknown dialog is idle.
  *
  * Every Claude hook payload includes `session_id`, and it changes when the user
  * switches sessions inside the TUI (`/resume`). Status events carry it so the
@@ -30,20 +28,29 @@ function parseClaudeHookEvent(
       : defaultHookEventParser(eventType, body);
   if (event.kind !== 'status') return event;
   const providerSessionId = extractProviderSessionId(body);
-  return providerSessionId ? { ...event, providerSessionId } : event;
+  const notification =
+    event.type === 'notification' &&
+    (event.notificationType === 'idle_prompt' || event.notificationType === 'auth_success')
+      ? { ...event, informational: true }
+      : event;
+  return providerSessionId ? { ...notification, providerSessionId } : notification;
 }
 
 function parseClaudeNotification(body: Record<string, unknown>): CanonicalHookEvent {
+  const event = defaultHookEventParser('notification', body);
+  if (event.kind !== 'status') return event;
+  // A newer, unknown explicit type must stay unknown rather than being guessed
+  // from prose that happens to mention waiting or completion.
+  if (body.notification_type != null || body.notificationType != null) return event;
   const message = typeof body.message === 'string' ? body.message : '';
   const notificationType = /permission|approval/i.test(message)
     ? ('permission_prompt' as const)
-    : ('idle_prompt' as const);
+    : /^Claude(?: Code)? is waiting for your input[.!]?$/i.test(message.trim())
+      ? ('idle_prompt' as const)
+      : undefined;
   return {
-    kind: 'status',
-    type: 'notification',
+    ...event,
     notificationType,
-    message: message || undefined,
-    title: typeof body.title === 'string' ? body.title : undefined,
   };
 }
 

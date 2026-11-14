@@ -163,6 +163,14 @@ from Studio and must not be used to infer laptop ownership. Attached SSH hosts a
 shut down by disconnecting the desktop. Preserve local Head, unsaved buffer, scheduled
 work and commit-time activity checks.
 
+An open conversation is not necessarily active work. A running TUI with a confirmed
+completed turn can remain open and resumable without blocking restart. Claude idle
+reminders must preserve the original completion evidence; newer input, permissions,
+unknown dialogs and missing lifecycle evidence still block. Do not infer readiness
+from terminal silence or the desktop conversation cache, and do not stop sessions to
+make readiness pass. Existing installations with overwritten completion state need
+genuine lifecycle evidence; never synthesize a Stop hook to bootstrap an update.
+
 `preparing` means readiness is being checked. `installing` is shown only after a restart
 commit is accepted. A refused readiness check becomes `blocked`, retains the staged
 verified release, and offers a direct install retry without downloading again. Periodic
@@ -178,3 +186,28 @@ remain mandatory. macOS `lipo` expects the executable before `-verify_arch`.
 Focused coverage: Taixu `update-coordinator`, `update-host`, `update-guard`, `update-activity`,
 `update-files` and `studio` node tests; shutdown `index` tests; headless `taixu-updates` and
 `studio-startup` browser tests. These use isolated fixtures and no paid model calls.
+
+
+Taixu journals verified release metadata (`updates/ready.json`), each installation attempt
+(`updates/attempts/<uuid>/`) and unresolved Studio commits (`updates/pending-studio.json`).
+These files are private, bounded and atomically replaced. A fresh process must reverify
+cached bytes and staging before offering retry. Never infer success from `install-result.txt`
+or from `open` returning zero. Only a process running the target from `/Applications/Taixu.app`
+with matching installed fingerprint and valid signature/architecture may mark startup confirmed.
+This is native startup confirmation, not complete renderer/SSH health. Keep maintenance v1
+backward compatible; `installedBuild` is optional for old peers.
+
+Installer stderr goes to the attempt log. The helper writes `awaiting-startup` before launching,
+so a quick startup acknowledgement cannot be overwritten. Explicitly fail every shell safety
+check: `set -e` does not exit for a failed first command in an AND list. Keep the old bundle at
+`/Applications/.Taixu-previous/<uuid>/Taixu.app`, refuse an existing destination, and never
+nest `mv` into a prior backup. Rollback copies are not pruned automatically; they accumulate
+until explicitly cleaned up. A helper still alive blocks another staging/installation attempt.
+A stalled committed quit requires a normal quit/reopen; do not unfreeze partially disposed
+services or kill agents. The UI exposes the attempt phase/error and keeps the cache.
+
+Coverage also includes `update-journal` persistence/validation tests, actual shell execution
+against temporary bundle fixtures, native signature/architecture verification against an
+existing signed app when `TAIXU_TEST_SIGNED_BUNDLE` is set, and startup confirmation tests.
+A physical laptop upgrade remains a separate acceptance check; fixture tests do not establish
+that a particular older installed updater can install this new code.
