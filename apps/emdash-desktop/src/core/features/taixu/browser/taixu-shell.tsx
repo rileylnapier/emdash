@@ -6,8 +6,10 @@ import { confirmOpenExternalLink } from '@core/features/workbench/api/browser/op
 import { openModal } from '@core/manifests/browser/modal-api';
 import { getNavigation } from '@core/primitives/navigation/browser/navigation-selectors';
 import { getTaixuClient } from '../api/browser/client';
+import { getStudioClient } from '../api/browser/studio-client';
 import { workOriginSchema, type WorkOrigin } from '../api/contract';
 import './taixu-shell.css';
+import { ServerMode } from './server-mode';
 import { StudioSelector } from './studio-selector';
 import { UpdateButton } from './update-button';
 
@@ -27,6 +29,20 @@ export function TaixuShell({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [hasInspected, setHasInspected] = useState(inspecting);
+  // Resolve the local preference before mounting WebGL, including on app restart.
+  const [serverMode, setServerMode] = useState<boolean | null>(null);
+  const [modeBusy, setModeBusy] = useState(false);
+  const loadMode = useCallback(async () => {
+    try {
+      const status = await (await getStudioClient()).status();
+      setServerMode(status.serverMode);
+    } catch {
+      setError('Could not read the display mode. Retry to open Taixu.');
+    }
+  }, []);
+  useEffect(() => {
+    void loadMode();
+  }, [loadMode]);
   const inspect = useCallback(
     (value: boolean) => {
       if (value) setHasInspected(true);
@@ -51,7 +67,7 @@ export function TaixuShell({
   }, [connect]);
 
   useEffect(() => {
-    if (!url) return;
+    if (!url || serverMode) return;
     let disposed = false;
     const timer = setInterval(() => {
       void getTaixuClient()
@@ -68,7 +84,18 @@ export function TaixuShell({
       disposed = true;
       clearInterval(timer);
     };
-  }, [url]);
+  }, [url, serverMode]);
+
+  const changeMode = async (enabled: boolean) => {
+    setModeBusy(true);
+    try {
+      await (await getStudioClient()).setServerMode({ enabled });
+      setServerMode(enabled);
+      inspect(false);
+    } finally {
+      setModeBusy(false);
+    }
+  };
 
   const createTask = useCallback(
     async (prompt?: string, projectId?: string, origin?: WorkOrigin, name?: string) => {
@@ -240,79 +267,119 @@ export function TaixuShell({
         <button className="taixu-brand" onClick={() => inspect(false)}>
           Taixu <span>LoveLife</span>
         </button>
-        <StudioSelector />
-        <nav aria-label="The Heads">
-          <button
-            disabled={!url}
-            onClick={() => {
-              inspect(false);
-              if (url)
-                frame.current?.contentWindow?.postMessage(
-                  { type: 'taixu-projects' },
-                  new URL(url).origin
-                );
-            }}
-          >
-            Your projects
-          </button>
-          {heads.map((h) => (
-            <button key={h} onClick={() => talk(h)} disabled={!url}>
-              {h}
-            </button>
-          ))}
-        </nav>
+        {serverMode !== true && (
+          <>
+            {serverMode === false && <StudioSelector onServerMode={() => changeMode(true)} />}
+            <nav aria-label="The Heads">
+              <button
+                disabled={!url || serverMode === null}
+                onClick={() => {
+                  inspect(false);
+                  if (url)
+                    frame.current?.contentWindow?.postMessage(
+                      { type: 'taixu-projects' },
+                      new URL(url).origin
+                    );
+                }}
+              >
+                Your projects
+              </button>
+              {heads.map((h) => (
+                <button key={h} onClick={() => talk(h)} disabled={!url || serverMode === null}>
+                  {h}
+                </button>
+              ))}
+            </nav>
+          </>
+        )}
         <div className="taixu-actions">
           <UpdateButton />
-          <button
-            onClick={() => {
-              getNavigation().navigate(settingsViewDef({ tab: 'clis-models' }));
-              inspect(true);
-            }}
-          >
-            Models &amp; accounts
-          </button>
-          <button
-            onClick={() => {
-              getNavigation().navigate(settingsViewDef({ tab: 'usage' }));
-              inspect(true);
-            }}
-          >
-            Usage
-          </button>
-          <button onClick={() => inspect(!inspecting)}>
-            {inspecting ? 'Back to Taixu' : 'Inspect work'}
-          </button>
+          {serverMode !== true && (
+            <>
+              <button
+                onClick={() => {
+                  getNavigation().navigate(settingsViewDef({ tab: 'clis-models' }));
+                  inspect(true);
+                }}
+              >
+                Models &amp; accounts
+              </button>
+              <button
+                onClick={() => {
+                  getNavigation().navigate(settingsViewDef({ tab: 'usage' }));
+                  inspect(true);
+                }}
+              >
+                Usage
+              </button>
+              <button onClick={() => inspect(!inspecting)}>
+                {inspecting ? 'Back to Taixu' : 'Inspect work'}
+              </button>
+            </>
+          )}
         </div>
       </header>
-      <main className="taixu-world" hidden={inspecting} inert={inspecting}>
-        {url ? (
-          <iframe
-            ref={frame}
-            src={url}
-            title="Taixu and the Heads"
-            sandbox="allow-scripts allow-same-origin"
-          />
-        ) : (
-          <div className="taixu-setup">
-            <h1>A place for your work.</h1>
-            <p>
-              {busy ? 'Opening Taixu…' : 'Open Taixu, then add a repository from Your projects.'}
-            </p>
-            <button disabled={busy} onClick={() => void connect()}>
-              Open Taixu
-            </button>
-          </div>
-        )}
-      </main>
+      {serverMode === true ? (
+        <ServerMode
+          url={url}
+          busy={busy || modeBusy}
+          error={error}
+          onReconnect={() => void connect()}
+          onOpenWorld={() =>
+            void changeMode(false).catch(() =>
+              setError('Could not change display mode. Try again.')
+            )
+          }
+        />
+      ) : (
+        <main className="taixu-world" hidden={inspecting} inert={inspecting}>
+          {url && serverMode === false ? (
+            <iframe
+              ref={frame}
+              src={url}
+              title="Taixu and the Heads"
+              sandbox="allow-scripts allow-same-origin"
+            />
+          ) : (
+            <div className="taixu-setup">
+              <h1>A place for your work.</h1>
+              <p>
+                {busy || serverMode === null
+                  ? 'Opening Taixu…'
+                  : 'Open Taixu, then add a repository from Your projects.'}
+              </p>
+              <button
+                disabled={busy}
+                onClick={() => {
+                  void loadMode();
+                  void connect();
+                }}
+              >
+                Open Taixu
+              </button>
+            </div>
+          )}
+        </main>
+      )}
       {(hasInspected || inspecting) && (
-        <div className="taixu-workbench" hidden={!inspecting} inert={!inspecting}>
+        <div
+          className="taixu-workbench"
+          hidden={!inspecting || serverMode === true}
+          inert={!inspecting || serverMode === true}
+        >
           {workbench}
         </div>
       )}
-      {error && (
+      {error && serverMode !== true && (
         <aside className="taixu-error" role="alert">
           <span>{error}</span>
-          <button disabled={busy} onClick={() => void connect()}>
+          <button
+            disabled={busy}
+            onClick={() => {
+              void loadMode();
+              void connect();
+            }}
+          >
             Retry
           </button>
           <button onClick={() => setError(null)} aria-label="Dismiss">

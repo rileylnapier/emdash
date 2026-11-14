@@ -1,6 +1,7 @@
 import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
+import { page } from 'vitest/browser';
 import { TaixuShell } from './taixu-shell';
 
 const mocks = vi.hoisted(() => ({
@@ -8,12 +9,16 @@ const mocks = vi.hoisted(() => ({
   taskExists: vi.fn(async () => true),
   navigate: vi.fn(),
   openModal: vi.fn(async () => undefined),
+  status: vi.fn(),
+  studioStatus: vi.fn(),
+  setServerMode: vi.fn(),
+  share: vi.fn(),
 }));
 vi.mock('../api/browser/client', () => ({
   getTaixuClient: async () => ({
     connect: mocks.connect,
     taskExists: mocks.taskExists,
-    status: async () => ({ running: true }),
+    status: mocks.status,
   }),
 }));
 vi.mock('@core/manifests/browser/modal-api', () => ({ openModal: mocks.openModal }));
@@ -27,11 +32,32 @@ vi.mock('@core/features/tasks/contributions/views', () => ({ taskViewDef: (p: un
 vi.mock('@core/features/workbench/api/browser/open-external-link', () => ({
   confirmOpenExternalLink: vi.fn(),
 }));
-vi.mock('./studio-selector', () => ({ StudioSelector: () => <span>This Mac</span> }));
-vi.mock('./update-button', () => ({ UpdateButton: () => <span>Updates</span> }));
+vi.mock('../api/browser/studio-client', () => ({
+  isStudioDesktop: () => false,
+  getStudioClient: async () => ({
+    status: mocks.studioStatus,
+    setServerMode: mocks.setServerMode,
+    share: mocks.share,
+  }),
+}));
+vi.mock('./update-button', () => ({
+  UpdateButton: () => <span data-testid="updates">Updates</span>,
+}));
 
 let host: HTMLDivElement;
 let root: Root;
+const studio = {
+  selected: null,
+  name: null,
+  connected: false,
+  sharing: true,
+  serverMode: false,
+  socketPath: '/tmp/example/desktop.sock',
+  error: null,
+  machines: [],
+  build: '0123456789abcdef',
+  uptimeSeconds: 7260,
+};
 beforeAll(() => {
   (
     globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
@@ -40,6 +66,10 @@ beforeAll(() => {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.connect.mockResolvedValue({ url: `${location.origin}/?taixu-test`, error: null });
+  mocks.status.mockResolvedValue({ running: true });
+  mocks.studioStatus.mockResolvedValue({ ...studio });
+  mocks.setServerMode.mockResolvedValue(undefined);
+  mocks.share.mockResolvedValue({ ...studio });
   host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
@@ -116,4 +146,108 @@ it('ignores launch requests from outside the embedded world', async () => {
   await mount();
   await message({ action: 'create-task', prompt: 'untrusted' }, false);
   expect(mocks.openModal).not.toHaveBeenCalled();
+});
+
+it('unloads the world without restarting the backend, and restores it on request', async () => {
+  await mount();
+  const previousFrame = host.querySelector('iframe');
+  const updates = host.querySelector('[data-testid="updates"]');
+  expect(previousFrame).not.toBeNull();
+  await click('This Mac ▾');
+  await click('Use server mode');
+  expect(mocks.setServerMode).toHaveBeenCalledExactlyOnceWith({ enabled: true });
+  expect(host.querySelector('iframe')).toBeNull();
+  expect(previousFrame!.isConnected).toBe(false);
+  expect(host.querySelector('[data-testid="updates"]')).toBe(updates);
+  expect(host.querySelector('h1')?.textContent).toBe('Server mode');
+  expect(mocks.connect).toHaveBeenCalledTimes(1);
+  expect(mocks.share).not.toHaveBeenCalled();
+  await click('Open Taixu');
+  expect(mocks.setServerMode).toHaveBeenLastCalledWith({ enabled: false });
+  expect(host.querySelector('iframe')).not.toBeNull();
+  expect(mocks.connect).toHaveBeenCalledTimes(1);
+});
+
+it('waits for the saved mode before creating any iframe and keeps restored work hidden', async () => {
+  let resolve!: (value: typeof studio) => void;
+  mocks.studioStatus.mockReturnValue(
+    new Promise<typeof studio>((done) => {
+      resolve = done;
+    })
+  );
+  const observedFrames: Element[] = [];
+  const observer = new MutationObserver((records) => {
+    for (const record of records)
+      for (const node of record.addedNodes)
+        if (node instanceof Element)
+          observedFrames.push(
+            ...node.querySelectorAll('iframe'),
+            ...(node.matches('iframe') ? [node] : [])
+          );
+  });
+  observer.observe(host, { subtree: true, childList: true });
+  try {
+    await mount(true);
+    expect(host.querySelector('iframe')).toBeNull();
+    await act(async () => resolve({ ...studio, serverMode: true }));
+    expect(host.querySelector('iframe')).toBeNull();
+    expect(observedFrames).toHaveLength(0);
+    expect(host.querySelector<HTMLElement>('.taixu-workbench')?.hidden).toBe(true);
+    expect(mocks.connect).toHaveBeenCalledTimes(1);
+  } finally {
+    observer.disconnect();
+  }
+});
+
+it('leaves the world mounted when saving server mode fails', async () => {
+  await mount();
+  const previousFrame = host.querySelector('iframe');
+  mocks.setServerMode.mockRejectedValueOnce(new Error('Cannot save display preference.'));
+  await click('This Mac ▾');
+  await click('Use server mode');
+  expect(host.textContent).toContain('Cannot save display preference.');
+  expect(host.querySelector('iframe')).toBe(previousFrame);
+});
+
+it('shows real diagnostics, makes lost status unknown, and omits capability URLs from copies', async () => {
+  mocks.studioStatus.mockResolvedValue({ ...studio, serverMode: true });
+  mocks.connect.mockResolvedValue({
+    url: `${location.origin}/secret-capability/?desktop=1`,
+    error: null,
+  });
+  const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined);
+  try {
+    await mount();
+    expect(host.textContent).toContain('Running');
+    expect(host.textContent).toContain('Enabled over SSH');
+    expect(host.textContent).toContain('2h 1m');
+    await click('Copy diagnostics');
+    expect(writeText.mock.calls[0]![0]).toContain(`Local endpoint: ${location.origin}`);
+    expect(writeText.mock.calls[0]![0]).not.toContain('secret-capability');
+    mocks.status.mockRejectedValueOnce(new Error('Disconnected'));
+    mocks.studioStatus.mockRejectedValueOnce(new Error('Disconnected'));
+    await click('Refresh status');
+    expect(host.textContent).not.toContain('Running');
+    expect(host.textContent).not.toContain('Enabled over SSH');
+    expect(host.textContent).toContain('Unknown');
+    expect(host.textContent).toContain('Backend status is unavailable.');
+  } finally {
+    writeText.mockRestore();
+  }
+});
+
+it('fits server mode in its compact window', async () => {
+  await page.viewport(520, 620);
+  document.body.style.margin = '0';
+  mocks.studioStatus.mockResolvedValue({ ...studio, serverMode: true });
+  await mount();
+  const main = host.querySelector('main')!;
+  expect(main.scrollWidth).toBeLessThanOrEqual(main.clientWidth);
+  const open = [...host.querySelectorAll('button')].find(
+    (button) => button.textContent === 'Open Taixu'
+  )!;
+  expect(open.getBoundingClientRect().bottom).toBeLessThanOrEqual(620);
+  if (import.meta.env.VITE_TAIXU_SCREENSHOT) {
+    await page.screenshot({ path: import.meta.env.VITE_TAIXU_SCREENSHOT });
+  }
 });

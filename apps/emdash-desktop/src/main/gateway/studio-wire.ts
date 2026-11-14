@@ -14,6 +14,7 @@ import type { SshServiceHandle } from '@core/manifests/node/ssh-service-handle';
 import type { Hosts } from '@core/services/hosts/node/hosts';
 import { appScope } from '@main/bootstrap/core/app-scope';
 import { assertIdleForTaixuUpdate } from '@main/bootstrap/shutdown';
+import { setServerWindowMode } from '@main/host/window';
 
 let installed = false;
 let ready: (controller: Controller) => void;
@@ -54,6 +55,7 @@ export async function configureStudioWire(
         )
   ).catch(() => '');
   const service = await createStudioService({
+    applyServerMode: setServerWindowMode,
     local: routeControllers(controllers),
     updates: createUpdateHost(app.getPath('userData'), build, assertIdleForTaixuUpdate),
     ssh,

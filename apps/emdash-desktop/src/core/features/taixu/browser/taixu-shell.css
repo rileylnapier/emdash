@@ -148,6 +148,111 @@
 .taixu-error span {
   flex: 1;
 }
+.taixu-server {
+  box-sizing: border-box;
+  height: calc(100vh - 48px);
+  overflow: auto;
+  padding: 24px;
+  font:
+    13px/1.5 system-ui,
+    sans-serif;
+}
+.taixu-server h1 {
+  margin: 4px 0 8px;
+  font:
+    34px Georgia,
+    serif;
+}
+.taixu-server p {
+  margin: 0;
+  color: #efe6d299;
+}
+.taixu-server-eyebrow {
+  color: #c9a24b;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  font-size: 10px;
+}
+.taixu-server-status {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin: 20px 0 16px;
+  padding: 16px;
+  border: 1px solid #c9a24b30;
+  border-radius: 10px;
+  background: #181e32;
+}
+.taixu-server dt {
+  color: #efe6d299;
+  font-size: 12px;
+}
+.taixu-server dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+.taixu-server-status dd[data-state='ready'] {
+  color: #a6c39e;
+}
+.taixu-server-details {
+  margin: 18px 0 14px;
+}
+.taixu-server-details > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 6px 0;
+}
+.taixu-server-details dd {
+  font:
+    12px ui-monospace,
+    monospace;
+  text-align: right;
+}
+.taixu-server-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.taixu-server button {
+  color: inherit;
+  background: transparent;
+  border: 1px solid #c9a24b45;
+  border-radius: 6px;
+  padding: 7px 12px;
+  font: inherit;
+  cursor: pointer;
+}
+.taixu-server button:hover {
+  background: #efe6d210;
+}
+.taixu-server button:focus-visible {
+  outline: 2px solid #c9a24b;
+  outline-offset: 2px;
+}
+.taixu-server button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.taixu-server footer {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid #c9a24b25;
+}
+.taixu-server footer p {
+  font-size: 12px;
+}
+.taixu-server .taixu-server-open {
+  margin-top: 16px;
+  background: #c9a24b;
+  color: #0e1328;
+}
+.taixu-server .taixu-server-error {
+  color: #f1b0a0;
+  margin-bottom: 16px;
+}
 @media (max-width: 900px) {
   .taixu-titlebar {
     gap: 12px;

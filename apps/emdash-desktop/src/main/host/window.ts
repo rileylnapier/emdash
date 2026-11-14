@@ -21,8 +21,16 @@ import { registerExternalLinkHandlers } from '@main/host/externalLinks';
 import { log } from '@main/lib/logger';
 import { telemetryService } from '@main/lib/telemetry';
 import { APP_ORIGIN } from './protocol';
+import { createServerWindowMode } from './server-window-mode';
 
 let mainWindow: BrowserWindow | null = null;
+let serverMode = false;
+const resizeForServerMode = createServerWindowMode(() => mainWindow);
+
+export function setServerWindowMode(enabled: boolean): void {
+  serverMode = enabled;
+  resizeForServerMode(enabled);
+}
 
 export function applyNativeTheme(theme: Theme): void {
   if (process.platform !== 'win32') return;
@@ -69,6 +77,7 @@ export function createMainWindow(): BrowserWindow {
     ...(process.platform === 'linux' ? { frame: false } : {}),
     show: false,
   });
+  resizeForServerMode(serverMode);
   watchWindow(mainWindow);
   mainWindow.webContents.once('did-finish-load', () => {
     log.info('boot-timeline', {
