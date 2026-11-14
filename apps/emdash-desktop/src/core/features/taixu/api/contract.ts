@@ -68,7 +68,24 @@ export const mergeReceiptSchema = z.object({
   status: z.enum(['pending', 'merged', 'failed', 'unknown']),
   created: z.boolean(),
 });
+export const archiveInputSchema = workTargetSchema;
+export const archiveResultSchema = z.object({
+  archived: z.boolean(),
+  cleaned: z.boolean(),
+  message: z.string(),
+});
+export type WorkArchiveResult = z.infer<typeof archiveResultSchema>;
+export type WorkArchiveInput = z.infer<typeof archiveInputSchema>;
 export const taixuContract = defineContract({
+  archiveWork: procedure({
+    input: archiveInputSchema,
+    output: archiveResultSchema,
+    callTimeoutMs: 0,
+  }),
+  restoreWork: procedure({
+    input: workTargetSchema,
+    output: z.object({ restored: z.boolean(), message: z.string() }),
+  }),
   reviewMerge: procedure({ input: workTargetSchema, output: mergeReviewSchema }),
   approveMerge: procedure({ input: mergeApprovalSchema, output: mergeResultSchema }),
   connect: procedure({

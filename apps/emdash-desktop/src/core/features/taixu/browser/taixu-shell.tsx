@@ -149,7 +149,7 @@ export function TaixuShell({
             : undefined
         ).catch(() => setError('Could not open the task dialog. Try Inspect work.'));
       } else if (
-        data.action === 'review-merge' &&
+        (data.action === 'review-merge' || data.action === 'archive-work') &&
         'taskId' in data &&
         typeof data.taskId === 'string' &&
         'projectId' in data &&
@@ -157,8 +157,12 @@ export function TaixuShell({
       ) {
         const target = { taskId: data.taskId, projectId: data.projectId };
         void getTaixuClient()
-          .then((client) => openModal('taixuMergeModal', { ...target, client }))
-          .catch(() => setError('Could not open the merge review. Reconnect and try again.'));
+          .then((client) =>
+            data.action === 'archive-work'
+              ? openModal('taixuArchiveModal', { ...target, client })
+              : openModal('taixuMergeModal', { ...target, client })
+          )
+          .catch(() => setError('Could not open the work action. Reconnect and try again.'));
       } else if (
         data.action === 'followup-work' &&
         'taskId' in data &&
@@ -176,6 +180,23 @@ export function TaixuShell({
             await openModal('taixuFollowupModal', { ...target, client, conversations });
           })
           .catch(() => setError('Could not open this work for changes. Reconnect and try again.'));
+      } else if (
+        data.action === 'restore-work' &&
+        'taskId' in data &&
+        typeof data.taskId === 'string' &&
+        'projectId' in data &&
+        typeof data.projectId === 'string'
+      ) {
+        const target = { taskId: data.taskId, projectId: data.projectId };
+        void getTaixuClient()
+          .then(async (client) => {
+            await client.restoreWork(target);
+            getNavigation().navigate(taskViewDef(target));
+            inspect(true);
+          })
+          .catch((error) =>
+            setError(error instanceof Error ? error.message : 'Could not restore this work.')
+          );
       } else if (
         data.action === 'inspect-task' &&
         'taskId' in data &&

@@ -113,6 +113,7 @@ import type { SessionCounter, SessionKiller } from './session-cleanup';
 import { executeUpdateWorktree, type UpdateWorktreeExecutionResult } from './update-worktree';
 import { WorkspaceUsageCache } from './usage-cache';
 import { removeWorkspaceArtifacts } from './workspace-artifacts';
+import { cleanWorkspaceDependencies, type DependencyCleanup } from './workspace-dependencies';
 
 export type WorkspaceRegistryRuntimeOptions = {
   handle: StoreHandle<WorkspaceRegistryDb>;
@@ -968,6 +969,70 @@ export class WorkspaceRegistryRuntime {
           preservePatterns,
           nestedWorkspacePaths: this.workspacesInside(record),
           createGitExec: (cwd) => this.gitContext.exec(cwd, { tier: 'activation' }),
+        });
+      } finally {
+        this.usage.invalidate(record.id);
+        release();
+        this.settleScan({ kind: 'workspace', id: record.id, mode: 'full' });
+      }
+    });
+  }
+
+  /** Safe archive cleanup; never deactivates a workspace or stops a session. */
+  cleanDependencies(input: {
+    workspaceId: string;
+    checkOnly?: boolean;
+  }): Promise<Result<DependencyCleanup, CleanArtifactsError>> {
+    return this.workspaceClaims.runExclusive(input.workspaceId, async () => {
+      const record = this.store.get(input.workspaceId);
+      if (!record) return err({ type: 'workspace-not-found', workspaceId: input.workspaceId });
+      if (record.kind !== 'worktree')
+        return err({
+          type: 'filesystem-error',
+          message: 'Only task worktrees can be cleaned when archiving.',
+        });
+      if (record.observedStatus === 'missing' || !(await isDirectory(record.path)))
+        return err({ type: 'workspace-missing', workspaceId: input.workspaceId });
+      const assertIdle = async () => {
+        const runtime = this.toWire(this.store.get(record.id) ?? record).runtime;
+        if (
+          (await this.countSessions(record.path)) > 0 ||
+          runtime?.creation ||
+          runtime?.activation?.phase === 'preparing' ||
+          Object.values(runtime?.activation?.scripts ?? {}).some(
+            (s) => s === 'running' || s === 'pending'
+          ) ||
+          runtime?.lifecycle?.some((s) => s.status === 'running')
+        )
+          throw new Error(
+            'This workspace still has sessions or scripts running. Wait for them to finish, then retry cleanup.'
+          );
+      };
+      if (!input.checkOnly) {
+        try {
+          await assertIdle();
+        } catch {
+          return err({ type: 'workspace-active', workspaceId: record.id });
+        }
+      }
+      const release = this.muteScans(record.id);
+      try {
+        return await this.gitContext.locks.withWriter(record.path, async () =>
+          ok(
+            await cleanWorkspaceDependencies({
+              workspacePath: record.path,
+              preservePatterns: await this.preservePatternsFor(record.id),
+              nestedWorkspacePaths: this.workspacesInside(record),
+              checkOnly: input.checkOnly,
+              createGitExec: (cwd) => this.gitContext.exec(cwd, { tier: 'activation' }),
+              assertIdle,
+            })
+          )
+        );
+      } catch (error) {
+        return err({
+          type: 'filesystem-error',
+          message: error instanceof Error ? error.message : String(error),
         });
       } finally {
         this.usage.invalidate(record.id);

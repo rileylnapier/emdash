@@ -24,6 +24,7 @@ import {
 import { prepareDataHome } from './data-home';
 import { readProjectDocuments } from './project-documents';
 import { registerHeadUpdateGuard } from './update-guard';
+import type { ArchiveWork } from './work-archive';
 import { WorkFollowupUnavailable } from './work-followup';
 import type { createWorkMerge } from './work-merge';
 
@@ -37,6 +38,7 @@ export function createTaixuWireController({
   readWorkReply,
   prepareFollowup,
   workMerge,
+  archiveWork,
 }: {
   readProjects: () => Promise<Project[]>;
   readConversations: () => Promise<Conversation[]>;
@@ -44,6 +46,7 @@ export function createTaixuWireController({
   scope: Scope;
   onAgentEvent?: (listener: (event: AgentEvent) => Promise<void>) => () => void;
   workMerge?: ReturnType<typeof createWorkMerge>;
+  archiveWork?: ArchiveWork;
   prepareFollowup?: (input: WorkFollowup) => Promise<() => Promise<void>>;
   readWorkReply?: (event: AgentEvent) => Promise<string | undefined>;
   resolveProvider: (
@@ -528,6 +531,47 @@ export function createTaixuWireController({
     });
   }
 
+  async function recordArchive(
+    input: WorkTarget & { status: string; archived?: boolean; cleaned?: boolean; message: string }
+  ) {
+    const worker = child;
+    if (!worker)
+      throw new Error('Taixu disconnected before saving the archive result. Retry to reconcile.');
+    await new Promise<void>((resolve, reject) => {
+      const id = randomUUID();
+      const done = (error?: string) => {
+        clearTimeout(timer);
+        worker.removeListener('message', onMessage);
+        worker.removeListener('exit', onExit);
+        if (error) reject(new Error(error));
+        else resolve();
+      };
+      const onExit = () => done('Taixu disconnected. Retry to reconcile archive status.');
+      const onMessage = (data: unknown) => {
+        if (
+          data &&
+          typeof data === 'object' &&
+          'type' in data &&
+          data.type === 'work-archive-result' &&
+          'id' in data &&
+          data.id === id
+        )
+          done('error' in data ? String(data.error) : undefined);
+      };
+      const timer = setTimeout(
+        () => done('Archive result was not confirmed. Retry to reconcile; history is kept.'),
+        5000
+      );
+      worker.on('message', onMessage);
+      worker.once('exit', onExit);
+      try {
+        worker.postMessage({ type: 'work-archive', id, input });
+      } catch {
+        onExit();
+      }
+    });
+  }
+
   async function followupWork(input: WorkFollowup, canSubmit = () => true) {
     if (updateHeld) return { status: 'failed' as const, message: 'Not sent: Taixu is updating.' };
     activeSubmissions++;
@@ -666,6 +710,56 @@ export function createTaixuWireController({
       return connecting;
     },
     status: () => ({ running: !!child && !!url }),
+    archiveWork: async (input) => {
+      const merger = requireMerge(input);
+      if (!archiveWork) throw new Error('Archiving is unavailable.');
+      activeSubmissions++;
+      try {
+        await recordArchive({
+          ...input,
+          status: 'pending',
+          message: 'Checking archive and cleanup readiness.',
+        });
+        let result;
+        try {
+          result = await archiveWork(input, async () => {
+            const observation = await merger.observe(input);
+            child?.postMessage({ type: 'work-observation', input: observation });
+            if (observation.status !== 'merged')
+              throw new Error('This work’s PR must be merged before finishing it.');
+          });
+        } catch (error) {
+          await recordArchive({
+            ...input,
+            status: 'blocked',
+            message: error instanceof Error ? error.message : String(error),
+          });
+          throw error;
+        }
+        await recordArchive({ ...input, ...result, status: 'archived' });
+        return result;
+      } finally {
+        activeSubmissions--;
+      }
+    },
+    restoreWork: async (input) => {
+      requireMerge(input);
+      if (!archiveWork) throw new Error('Restoring is unavailable.');
+      activeSubmissions++;
+      try {
+        const result = await archiveWork.restore(input);
+        await recordArchive({
+          ...input,
+          status: 'restored',
+          archived: false,
+          cleaned: false,
+          message: result.message,
+        });
+        return result;
+      } finally {
+        activeSubmissions--;
+      }
+    },
     reviewMerge: async (target) => {
       const review = await requireMerge(target).review(target);
       if (review.pr.provider === 'github')

@@ -57,6 +57,7 @@ import { createSearchWireController } from '@core/features/search/node/wire-cont
 import { createSkillsWireController } from '@core/features/skills/node/wire-controller';
 import { createSourceControlWireController } from '@core/features/source-control/node/wire-controller';
 import { createTaixuWireController } from '@core/features/taixu/node/wire-controller';
+import { createWorkArchive } from '@core/features/taixu/node/work-archive';
 import { createWorkFollowup } from '@core/features/taixu/node/work-followup';
 import { createWorkMerge } from '@core/features/taixu/node/work-merge';
 import { createWorkHeadReader } from '@core/features/taixu/node/work-merge-head';
@@ -486,6 +487,7 @@ export const desktopNodeControllers = {
       projects,
       runtimeClients,
       onTaixuAgentEvent,
+      telemetry,
     }) =>
       createTaixuWireController({
         readProjects: () => getProjects(db),
@@ -495,6 +497,14 @@ export const desktopNodeControllers = {
         workMerge: createWorkMerge({
           readHead: createWorkHeadReader({ projects, taskService, workspaceIdentity, runtimes }),
           getClient: () => runtimeClients.getPullRequestsRuntimeClient(),
+        }),
+        archiveWork: createWorkArchive({
+          taskService,
+          workspaceIdentity,
+          runtimes,
+          readConversations: () => getConversations(db),
+          archive: (target) => taskService.archiveTask(target.projectId, target.taskId, telemetry),
+          restore: (taskId) => taskService.restoreTask(taskId),
         }),
         prepareFollowup: createWorkFollowup({
           readConversations: () => getConversations(db),

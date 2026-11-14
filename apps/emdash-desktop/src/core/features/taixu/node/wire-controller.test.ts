@@ -27,6 +27,8 @@ const mocks = vi.hoisted(() => ({
   observeWork: vi.fn(),
   approveMerge: vi.fn(),
   updateGuard: vi.fn(),
+  archiveWork: vi.fn(),
+  restoreWork: vi.fn(),
 }));
 vi.mock('./update-guard', () => ({
   registerHeadUpdateGuard: (guard: (hold: boolean) => Promise<void>) => {
@@ -247,6 +249,7 @@ beforeEach(async () => {
       taskService: { getTasks: mocks.getTasks },
       prepareFollowup: mocks.prepareFollowup,
       readWorkReply: mocks.readWorkReply,
+      archiveWork: Object.assign(mocks.archiveWork, { restore: mocks.restoreWork }),
       workMerge: {
         review: mocks.reviewMerge,
         approve: mocks.approveMerge,
@@ -572,3 +575,62 @@ it.each(['cancelled', 'disconnected'])(
     expect(send).not.toHaveBeenCalled();
   }
 );
+
+it('persists archive readiness and cleanup outcomes, and lets archived work retry', async () => {
+  await linkedWork();
+  const receipts: { status: string; message: string }[] = [];
+  worker.postMessage.mockImplementation((message) => {
+    if (message.type !== 'work-archive') return;
+    receipts.push(message.input);
+    queueMicrotask(() => worker.emit('message', { type: 'work-archive-result', id: message.id }));
+  });
+  mocks.archiveWork.mockImplementation(async () => {
+    expect(receipts.at(-1)?.status).toBe('pending');
+    await expect(mocks.updateGuard(true)).rejects.toThrow('submission is in progress');
+    return { archived: true, cleaned: false, message: 'Studio: terminal remains; retry cleanup.' };
+  });
+  const target = { taskId, projectId: 'project' };
+  expect(await wire.client.archiveWork(target)).toMatchObject({ archived: true, cleaned: false });
+  expect(receipts.map((r) => r.status)).toEqual(['pending', 'archived']);
+  mocks.archiveWork.mockResolvedValue({
+    archived: true,
+    cleaned: true,
+    message: 'Dependencies cleaned.',
+  });
+  expect(await wire.client.archiveWork(target)).toMatchObject({ cleaned: true });
+  mocks.restoreWork.mockResolvedValue({ restored: true, message: 'Restored original work.' });
+  await wire.client.restoreWork(target);
+  expect(receipts.at(-1)).toMatchObject({ status: 'restored', archived: false });
+  expect(mocks.restoreWork).toHaveBeenCalledWith(target);
+});
+
+it('does not archive without a durable intent, and records readiness blockers', async () => {
+  await linkedWork();
+  worker.postMessage.mockImplementation((message) => {
+    if (message.type === 'work-archive')
+      queueMicrotask(() =>
+        worker.emit('message', {
+          type: 'work-archive-result',
+          id: message.id,
+          error: 'Disk unavailable',
+        })
+      );
+  });
+  const target = { taskId, projectId: 'project' };
+  await expect(wire.client.archiveWork(target)).rejects.toThrow('Disk unavailable');
+  expect(mocks.archiveWork).not.toHaveBeenCalled();
+  const receipts: { status: string; message: string }[] = [];
+  worker.postMessage.mockImplementation((message) => {
+    if (message.type !== 'work-archive') return;
+    receipts.push(message.input);
+    queueMicrotask(() => worker.emit('message', { type: 'work-archive-result', id: message.id }));
+  });
+  mocks.archiveWork.mockRejectedValue(new Error('Taixu buildings: agent still working on Studio.'));
+  await expect(wire.client.archiveWork(target)).rejects.toThrow('agent still working');
+  expect(receipts.at(-1)).toMatchObject({
+    status: 'blocked',
+    message: expect.stringContaining('Studio'),
+  });
+  await expect(wire.client.archiveWork({ ...target, projectId: 'other' })).rejects.toThrow();
+  expect(mocks.archiveWork).toHaveBeenCalledTimes(1);
+});
