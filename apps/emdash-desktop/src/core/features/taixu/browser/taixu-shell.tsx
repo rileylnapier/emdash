@@ -279,13 +279,6 @@ export function TaixuShell({
           >
             Usage
           </button>
-          <button
-            onClick={() =>
-              void createTask().catch(() => setError('Could not open the task dialog.'))
-            }
-          >
-            Start work
-          </button>
           <button onClick={() => inspect(!inspecting)}>
             {inspecting ? 'Back to Taixu' : 'Inspect work'}
           </button>
