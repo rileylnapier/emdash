@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { createController } from '@emdash/wire/rpc';
 import { app } from 'electron';
@@ -13,6 +14,16 @@ import {
   verifyBundle,
 } from './update-files';
 import { holdForUpdate, markTaixuInstallRequested } from './update-guard';
+import {
+  attemptDirectory,
+  beginUpdateAttempt,
+  installerRunning,
+  readReadyUpdate,
+  readUpdateAttempt,
+  saveReadyUpdate,
+  setUpdatePhase,
+  type UpdatePhase,
+} from './update-journal';
 
 export function createUpdateHost(userData: string, build: string, assertIdle: () => Promise<void>) {
   const root = updateRoot(userData);
@@ -21,6 +32,7 @@ export function createUpdateHost(userData: string, build: string, assertIdle: ()
   let reservation:
     | {
         id: string;
+        attempt: string | undefined;
         target: string;
         release: () => Promise<void>;
         timer: ReturnType<typeof setTimeout>;
@@ -30,6 +42,38 @@ export function createUpdateHost(userData: string, build: string, assertIdle: ()
   let staging = false;
   let installing = false;
   let disposed = false;
+  const installedBuild = async () =>
+    !app.isPackaged
+      ? build
+      : (await readFile(path.join(installed, 'Contents/Resources/taixu-build.txt'), 'utf8')).trim();
+  let startup: Promise<void> | undefined;
+  const recover = async () => {
+    // Only the new process can acknowledge an installation. A legacy text
+    // receipt is deliberately never used as evidence.
+    startup ??= (async () => {
+      const attempt = await readUpdateAttempt(root);
+      if (!attempt) return;
+      if (
+        attempt.phase === 'awaiting-startup' &&
+        !attempt.error &&
+        build === attempt.release.build
+      ) {
+        if (
+          !app.isPackaged ||
+          installed !== '/Applications/Taixu.app' ||
+          (await realpath(installed)) !== installed ||
+          path.resolve(process.execPath) !== path.join(installed, 'Contents/MacOS/Taixu') ||
+          (await installedBuild()) !== build
+        )
+          throw new Error('The installed and running Taixu builds do not match.');
+        await verifyBundle(installed, installed, attempt.release);
+        await setUpdatePhase(root, attempt.id, 'confirmed');
+      }
+    })();
+    await startup;
+    return { attempt: await readUpdateAttempt(root), ready: await readReadyUpdate(root) };
+  };
+
   async function cancel(id?: string) {
     if (!reservation || (id && reservation.id !== id) || installing) return;
     const current = reservation;
@@ -44,6 +88,14 @@ export function createUpdateHost(userData: string, build: string, assertIdle: ()
       throw new Error('An update is already being prepared.');
     staging = true;
     try {
+      if ((await installedBuild()) !== build)
+        throw new Error(
+          'The installed and running Taixu builds differ. Reopen /Applications/Taixu.app before updating.'
+        );
+      if (installerRunning(await readUpdateAttempt(root)))
+        throw new Error(
+          'The previous installer is still running. Wait for it to finish before retrying.'
+        );
       if (staged?.release.build === release.build) return;
       if (staged) await removeUpdateDirectory(staged.directory);
       staged = undefined;
@@ -54,22 +106,46 @@ export function createUpdateHost(userData: string, build: string, assertIdle: ()
       staging = false;
     }
   }
-  async function stage(release: TaixuRelease, sourceRoot = root) {
+  async function stage(release: TaixuRelease, sourceRoot = root, source: string | null = null) {
     if (preparing) throw new Error('An update is already being prepared.');
-    return stageInternal(release, sourceRoot);
+    await stageInternal(release, sourceRoot);
+    await saveReadyUpdate(root, {
+      release,
+      cache: sourceRoot === root ? 'root' : 'download',
+      source,
+    });
   }
   async function prepare(target: string) {
     if (disposed) throw new Error('Taixu is shutting down.');
     if (reservation || preparing || staging || installing)
       throw new Error('An update is already being prepared.');
     preparing = true;
+    let attempt: string | undefined;
     try {
+      if ((await installedBuild()) !== build)
+        throw new Error(
+          'The installed and running Taixu builds differ. Reopen /Applications/Taixu.app before updating.'
+        );
+      if (installerRunning(await readUpdateAttempt(root)))
+        throw new Error(
+          'The previous installer is still running. Wait for it to finish before retrying.'
+        );
       if (target !== build && staged?.release.build !== target) {
-        const release = await readRelease(root);
+        const saved = await readReadyUpdate(root);
+        const release = saved?.release.build === target ? saved.release : await readRelease(root);
         if (release?.build !== target)
           throw new Error('The selected release is no longer available.');
-        await stageInternal(release);
+        await stageInternal(
+          release,
+          saved?.release.build === target && saved.cache === 'download'
+            ? path.join(root, 'download')
+            : root
+        );
+        if (saved?.release.build !== target)
+          await saveReadyUpdate(root, { release, cache: 'root', source: null });
       }
+      if (target !== build && staged)
+        attempt = await beginUpdateAttempt(root, build, staged.release);
       const release = await holdForUpdate(assertIdle);
       if (disposed) {
         await release();
@@ -77,8 +153,17 @@ export function createUpdateHost(userData: string, build: string, assertIdle: ()
       }
       const id = randomUUID();
       const timer = setTimeout(() => void cancel(id).catch(() => {}), 600000);
-      reservation = { id, target, release, timer };
+      reservation = { id, attempt, target, release, timer };
       return id;
+    } catch (error) {
+      if (attempt)
+        await setUpdatePhase(
+          root,
+          attempt,
+          'checking-work',
+          error instanceof Error ? error.message : 'Readiness check failed.'
+        );
+      throw error;
     } finally {
       preparing = false;
     }
@@ -91,27 +176,56 @@ export function createUpdateHost(userData: string, build: string, assertIdle: ()
     installing = true;
     const current = reservation;
     clearTimeout(current.timer);
+    let phase: UpdatePhase = 'checking-work';
     try {
       await assertIdle();
+      if ((await installedBuild()) !== build)
+        throw new Error(
+          'The installed app changed during update preparation. Reopen Taixu before retrying.'
+        );
       if (disposed) throw new Error('Taixu is shutting down.');
       if (current.target !== build) {
         if (!staged || staged.release.build !== current.target)
           throw new Error('The prepared update is unavailable.');
+        phase = 'verifying';
+        if (current.attempt) await setUpdatePhase(root, current.attempt, phase);
         await verifyBundle(staged.bundle, installed, staged.release);
         if (disposed) throw new Error('Taixu is shutting down.');
-        await launchInstaller(root, installed, staged.bundle);
+        if (!current.attempt) throw new Error('Update attempt is unavailable.');
+        phase = 'starting-installer';
+        await setUpdatePhase(root, current.attempt, phase);
+        await launchInstaller(root, installed, staged.bundle, {
+          id: current.attempt,
+          directory: attemptDirectory(root, current.attempt),
+          build: staged.release.build,
+          fromBuild: build,
+        });
       } else app.relaunch();
       markTaixuInstallRequested();
       setTimeout(() => app.quit(), 500);
     } catch (error) {
       installing = false;
-      await cancel(id);
+      try {
+        if (current.attempt)
+          await setUpdatePhase(
+            root,
+            current.attempt,
+            phase,
+            error instanceof Error ? error.message : 'Installation failed.'
+          );
+      } finally {
+        await cancel(id);
+      }
       throw error;
     }
   }
 
   const controller = createController(maintenanceContract, {
-    info: async () => ({ build, release: await readRelease(root) }),
+    info: async () => ({
+      build,
+      installedBuild: await installedBuild(),
+      release: await readRelease(root),
+    }),
     chunk: async ({ build: requested, offset }) => {
       const release = await readRelease(root);
       if (release?.build !== requested)
@@ -137,6 +251,8 @@ export function createUpdateHost(userData: string, build: string, assertIdle: ()
     controller,
     root,
     build,
+    recover,
+    installedBuild,
     stage,
     prepare,
     commit,

@@ -37,12 +37,17 @@ export const updateStateSchema = z.object({
   message: z.string(),
   remote: z.boolean(),
   target: z.enum(['this-mac', 'studio', 'both']).optional(),
+  diagnostics: z.string().optional(),
 });
 export type TaixuUpdateState = z.infer<typeof updateStateSchema>;
 export const maintenanceContract = defineContract({
   info: procedure({
     input: z.void(),
-    output: z.object({ build: z.string(), release: releaseSchema.nullable() }),
+    output: z.object({
+      build: z.string(),
+      release: releaseSchema.nullable(),
+      installedBuild: z.string().optional(),
+    }),
   }),
   chunk: procedure({
     input: z.object({ build: buildSchema, offset: z.number().int().min(0) }),
