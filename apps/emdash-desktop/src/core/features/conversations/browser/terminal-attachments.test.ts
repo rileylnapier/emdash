@@ -1,6 +1,7 @@
 import { MAX_ATTACHMENT_FILES } from '@emdash/core/services/attachments/api';
 import { deferred } from '@emdash/shared/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { setStudioDesktop } from '@core/features/taixu/api/browser/studio-client';
 import { createWorkspaceTerminalAttachments } from '@core/features/terminals/api/browser/terminal-attachments';
 import { createConversationTerminalAttachments } from './terminal-attachments';
 
@@ -44,6 +45,7 @@ const ref = {
 const file = () => new File(['text'], 'notes.txt');
 const signal = () => new AbortController().signal;
 beforeEach(() => {
+  setStudioDesktop(false);
   vi.resetAllMocks();
   mocks.upload.mockResolvedValue({ success: true, data: ref });
   mocks.workspaceUpload.mockResolvedValue({ success: true, data: ref });
@@ -192,4 +194,18 @@ describe('terminal attachment owners and batches', () => {
     ).rejects.toThrow('20 files');
     expect(mocks.upload).not.toHaveBeenCalled();
   });
+});
+
+it('uploads laptop attachments in Studio mode even when Electron supplies a local path', async () => {
+  setStudioDesktop(true);
+  vi.stubGlobal('window', { electronAPI: { getPathForFile: () => '/laptop/notes.txt' } });
+  try {
+    const target = createConversationTerminalAttachments('conversation');
+    const result = await target.prepareFiles([file()], signal());
+    expect(mocks.upload).toHaveBeenCalled();
+    expect(mocks.prepareLocalFiles).not.toHaveBeenCalled();
+    expect(result.paths).toEqual([ref.targetPath]);
+  } finally {
+    setStudioDesktop(false);
+  }
 });

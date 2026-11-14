@@ -142,9 +142,8 @@ function makeCodexSessionStartCommand(): string {
 }
 
 /**
- * Codex sends `{ type: 'agent-turn-complete' }` as its stop signal instead
- * of a plain 'stop' event type, and uses fixed `notification_type` values
- * in its hook payloads rather than piping JSON.
+ * Accept legacy notification-based completion signals as well as native Stop
+ * payloads. Keep the final reply when older notify integrations supply it.
  */
 function parseCodexHookEvent(eventType: string, body: Record<string, unknown>): CanonicalHookEvent {
   if (eventType === 'session-start') {
@@ -160,7 +159,13 @@ function parseCodexHookEvent(eventType: string, body: Record<string, unknown>): 
   if (eventType === 'notification') {
     const nt = body.notification_type;
     if (nt === 'idle_prompt' || (typeof nt !== 'string' && body.type === 'agent-turn-complete')) {
-      return { kind: 'status', type: 'stop' };
+      return defaultHookEventParser('stop', {
+        ...body,
+        last_assistant_message:
+          body.last_assistant_message ??
+          body.lastAssistantMessage ??
+          body['last-assistant-message'],
+      });
     }
     if (nt === 'permission_prompt') {
       return { kind: 'status', type: 'notification', notificationType: 'permission_prompt' };
@@ -171,7 +176,9 @@ function parseCodexHookEvent(eventType: string, body: Record<string, unknown>): 
 }
 
 export function buildCodexHookConfig() {
-  const stopCmd = makeNotificationHookCommand('idle_prompt');
+  // Native Stop supplies last_assistant_message on stdin. Forward it unchanged;
+  // a fixed notification body loses the reply. Codex expects JSON on stdout.
+  const stopCmd = makeHookPostCommand('stop', 'stdin', { stdoutJson: {} });
   const permCmd = makeNotificationHookCommand('permission_prompt');
   const sessionCmd = makeCodexSessionStartCommand();
   const specs: [string, string][] = [

@@ -4,6 +4,7 @@ import {
   type AttachmentRef,
 } from '@emdash/core/services/attachments/api';
 import type { UploadFileValue } from '@emdash/wire/rpc';
+import { isStudioDesktop } from '@core/features/taixu/api/browser/studio-client';
 import type { NodePlatform } from '@core/primitives/desktop-host/api/host-contract';
 import { log } from '@core/primitives/logging/browser/logger';
 import type {
@@ -90,7 +91,7 @@ export function createTerminalAttachmentTarget(
     prepareFiles: (files, signal, snapshot = false) =>
       batch(files, signal, async (file) => {
         const path =
-          typeof window === 'undefined'
+          typeof window === 'undefined' || isStudioDesktop()
             ? ''
             : (window.electronAPI?.getPathForFile(file)?.trim() ?? '');
         if (path && !isUnstableDropPath(path)) {

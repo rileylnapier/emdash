@@ -21,6 +21,7 @@ const systemNodeAlias = {
   ...alias,
   'better-sqlite3': resolve(__dirname, 'tooling/node-deps/node_modules/better-sqlite3'),
   electron: resolve(__dirname, 'tooling/vitest/electron-system-node.ts'),
+  'original-fs': 'node:fs',
 };
 
 // Node-environment tests get a throwaway home directory before the app config is loaded, so

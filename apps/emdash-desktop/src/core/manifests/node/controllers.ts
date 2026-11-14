@@ -57,6 +57,10 @@ import { createSearchWireController } from '@core/features/search/node/wire-cont
 import { createSkillsWireController } from '@core/features/skills/node/wire-controller';
 import { createSourceControlWireController } from '@core/features/source-control/node/wire-controller';
 import { createTaixuWireController } from '@core/features/taixu/node/wire-controller';
+import { createWorkFollowup } from '@core/features/taixu/node/work-followup';
+import { createWorkMerge } from '@core/features/taixu/node/work-merge';
+import { createWorkHeadReader } from '@core/features/taixu/node/work-merge-head';
+import { finalWorkReply } from '@core/features/taixu/node/work-reply';
 import type { TaskService } from '@core/features/tasks/api/node/task-service';
 import type { TaskSessionLaunchContextResolver } from '@core/features/tasks/api/node/task-session-launch-context';
 import type { TaskSessionManager } from '@core/features/tasks/api/node/task-session-manager';
@@ -146,6 +150,7 @@ export type DesktopControllerContext = {
   readonly logger: Logger;
   readonly loggingOperations: LoggingControllerOperations;
   readonly notifications: NotificationService;
+  readonly onTaixuAgentEvent: Parameters<typeof createTaixuWireController>[0]['onAgentEvent'];
   readonly previewServerAccess: PreviewServerAccessOperations;
   readonly projectDeletion: ProjectDeletionDependencies;
   readonly promptLibrary: PromptLibraryService;
@@ -470,12 +475,55 @@ export const desktopNodeControllers = {
     },
   },
   taixu: {
-    create: ({ db, taskService, scope, agentDependencies, providerSettings }) =>
+    create: ({
+      db,
+      taskService,
+      scope,
+      agentDependencies,
+      providerSettings,
+      runtimes,
+      workspaceIdentity,
+      projects,
+      runtimeClients,
+      onTaixuAgentEvent,
+    }) =>
       createTaixuWireController({
         readProjects: () => getProjects(db),
         readConversations: () => getConversations(db),
         taskService,
         scope,
+        workMerge: createWorkMerge({
+          readHead: createWorkHeadReader({ projects, taskService, workspaceIdentity, runtimes }),
+          getClient: () => runtimeClients.getPullRequestsRuntimeClient(),
+        }),
+        prepareFollowup: createWorkFollowup({
+          readConversations: () => getConversations(db),
+          taskService,
+          runtimes,
+          workspaceIdentity,
+        }),
+        onAgentEvent: onTaixuAgentEvent,
+        readWorkReply: async (event) => {
+          const conversation = (await getConversations(db)).find(
+            (c) =>
+              c.id === event.conversationId &&
+              c.taskId === event.taskId &&
+              c.projectId === event.projectId
+          );
+          if (conversation?.type !== 'acp') return;
+          const task = (await taskService.getTasks(event.projectId)).find(
+            (t) => t.id === event.taskId
+          );
+          if (!task?.workspaceId) return;
+          const identity = await workspaceIdentity.resolve(task.workspaceId);
+          if (!identity) return;
+          const client = await runtimes.client(identity.host);
+          if (!client.success) return;
+          const result = await client.data.acp.exportAcpTranscript({
+            conversationId: event.conversationId,
+          });
+          return result.success ? finalWorkReply(result.data.transcript) : undefined;
+        },
         resolveProvider: async (providerId) => {
           const manager = await agentDependencies.getDependencyManager();
           if (!manager.success) throw new Error('Local agent settings are unavailable.');

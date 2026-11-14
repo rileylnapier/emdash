@@ -10,35 +10,30 @@ import {
 } from './add-project-modal/project-directory-picker';
 
 export interface DirectorySelectorModalProps {
-  connectionId: string;
+  computerName?: string;
+  connectionId?: string;
   initialPath?: string;
   ensureDefaultRoot?: boolean;
   getProjectsClient(): Promise<ProjectDirectoryPickerClient>;
 }
 
 export function DirectorySelectorModal({
+  computerName,
   connectionId,
   initialPath = '',
   ensureDefaultRoot = false,
   getProjectsClient,
 }: DirectorySelectorModalProps) {
   const modal = useModalController('directorySelectorModal');
+  const host = connectionId ? { type: 'ssh' as const, connectionId } : { type: 'local' as const };
   const [selectedPathOverride, setSelectedPathOverride] = useState<string | null>(null);
   const homeQuery = useQuery({
-    queryKey: ['projectHostHomeDir', { type: 'ssh', connectionId }],
-    queryFn: async () =>
-      (await getProjectsClient()).getHostHomeDir({
-        type: 'ssh',
-        connectionId,
-      }),
+    queryKey: ['projectHostHomeDir', host],
+    queryFn: async () => (await getProjectsClient()).getHostHomeDir(host),
   });
   const ensureDefaultRootQuery = useQuery({
     queryKey: ['ensureProjectDefaultRepositoriesRoot', connectionId],
-    queryFn: async () =>
-      (await getProjectsClient()).ensureDefaultRepositoriesRoot({
-        type: 'ssh',
-        connectionId,
-      }),
+    queryFn: async () => (await getProjectsClient()).ensureDefaultRepositoriesRoot(host),
     enabled: ensureDefaultRoot,
   });
   const pickerInitialPath =
@@ -53,7 +48,9 @@ export function DirectorySelectorModal({
     <ModalLayout
       header={
         <Dialog.Header>
-          <Dialog.Title>Select Remote Directory</Dialog.Title>
+          <Dialog.Title>
+            {computerName ? `Select a directory on ${computerName}` : 'Select Remote Directory'}
+          </Dialog.Title>
         </Dialog.Header>
       }
       footer={
@@ -81,7 +78,7 @@ export function DirectorySelectorModal({
             </div>
           ) : (
             <ProjectDirectoryPicker
-              strategy="ssh"
+              strategy={connectionId ? 'ssh' : 'local'}
               connectionId={connectionId}
               initialPath={pickerInitialPath}
               homePath={homeQuery.data ?? ''}

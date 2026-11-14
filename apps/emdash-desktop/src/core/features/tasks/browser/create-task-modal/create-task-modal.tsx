@@ -33,7 +33,7 @@ import { getNavigation } from '@core/primitives/navigation/browser/navigation-se
 import { createTaskModalDefaults, type CreateTaskStrategy } from './create-task-modal-defaults';
 import { LinkedEntitySection } from './linked-entity-section';
 import { TaskNameField } from './task-name-field';
-import { useCreateTaskCallback } from './use-create-task-callback';
+import { useCreateTaskCallback, type TaskHandoffCallbacks } from './use-create-task-callback';
 import { useCreateTaskState } from './use-create-task-state';
 
 function useDefaultProjectId(propProjectId?: string): string | undefined {
@@ -56,13 +56,17 @@ export const CreateTaskModal = observer(function CreateTaskModal({
   initialPR,
   initialWorkspaceId,
   initialPrompt,
+  initialName,
+  onBeforeCreate,
+  onCreateFailed,
 }: {
   projectId?: string;
   strategy?: CreateTaskStrategy;
   initialPR?: PullRequest;
   initialWorkspaceId?: string;
   initialPrompt?: string;
-}) {
+  initialName?: string;
+} & TaskHandoffCallbacks) {
   const { complete } = useModalController('taskModal');
   const defaultProjectId = useDefaultProjectId(projectId);
   const [selectedProjectId, setSelectedProjectId] = useState(defaultProjectId);
@@ -116,7 +120,8 @@ export const CreateTaskModal = observer(function CreateTaskModal({
     repositoryWorkspaceId,
     resolvedInitialPR,
     defaults.linkedType,
-    initialWorkspaceId
+    initialWorkspaceId,
+    initialName
   );
 
   const { includeIssueContextByDefault } = useTaskSettings();
@@ -126,12 +131,14 @@ export const CreateTaskModal = observer(function CreateTaskModal({
   });
   const { navigate } = useNavigate();
 
-  const { handleCreateTask, canCreate } = useCreateTaskCallback({
+  const { handleCreateTask, canCreate, createError } = useCreateTaskCallback({
     selectedProjectId,
     state,
     initialConversation,
     navigate,
     onCreated: complete,
+    onBeforeCreate,
+    onCreateFailed,
   });
   const createAvailability = selectedProjectId
     ? taskHostActionAvailability(selectedProjectId)
@@ -151,6 +158,11 @@ export const CreateTaskModal = observer(function CreateTaskModal({
         <Dialog.Title>Create Task</Dialog.Title>
       </Dialog.Header>
       <Dialog.Body>
+        {createError && (
+          <p role="alert" className="text-destructive">
+            {createError}
+          </p>
+        )}
         <div className="flex w-full flex-col gap-5">
           <label className="flex flex-col gap-2 text-sm">
             Project

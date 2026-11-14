@@ -47,6 +47,7 @@ vi.mock('../core/app-scope', () => ({
 }));
 vi.mock('../shutdown', () => ({
   configureShutdownRuntimeClients: mocks.configureShutdownClients,
+  configureUpdateActivityCheck: vi.fn(),
 }));
 vi.mock('../shutdown/phases', () => ({
   configureQuitCleanupServices: mocks.configureCleanup,

@@ -1,4 +1,8 @@
 import { DirectoryField as DirectoryFieldPrimitive } from '@emdash/ui/react/primitives';
+import {
+  getStudioComputerName,
+  isStudioDesktop,
+} from '@core/features/taixu/api/browser/studio-client';
 import { useOpenModal } from '@core/manifests/browser/modal-api';
 import { getHostClient } from '@core/primitives/desktop-host/browser/host-client';
 import { type Strategy } from './add-project-modal';
@@ -31,9 +35,10 @@ export function DirectoryField({
   const disabled = strategy === 'ssh' && !connectionId;
 
   const handleChooseDirectory = async () => {
-    if (strategy === 'ssh') {
-      if (!connectionId) return;
+    if (strategy === 'ssh' || isStudioDesktop()) {
+      if (strategy === 'ssh' && !connectionId) return;
       const outcome = await openDirectorySelectorModal({
+        computerName: strategy === 'local' ? (getStudioComputerName() ?? undefined) : undefined,
         connectionId,
         initialPath: path || undefined,
         ensureDefaultRoot,

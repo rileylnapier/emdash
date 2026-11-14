@@ -1,3 +1,4 @@
+import { isStudioDesktop } from '@core/features/taixu/api/browser/studio-client';
 import {
   isHeicLikeFile,
   isUnstableDropPath,
@@ -8,7 +9,7 @@ import { log } from '@core/primitives/logging/browser/logger';
 const MAX_DROPPED_BLOB_BYTES = 50 * 1024 * 1024;
 
 export async function resolveDroppedFile(file: File): Promise<string | null> {
-  const originalPath = window.electronAPI.getPathForFile(file).trim();
+  const originalPath = isStudioDesktop() ? '' : window.electronAPI.getPathForFile(file).trim();
   if (originalPath && !isUnstableDropPath(originalPath) && !isHeicLikeFile(file)) {
     return originalPath;
   }

@@ -79,7 +79,7 @@ async function bootstrap() {
   initBootSplash();
   // Core owns wire access through the seeded-connection seam; seed it before
   // React mounts so any slice can reach the wire without host imports.
-  seedDesktopWire();
+  await seedDesktopWire();
 
   // Navigation lives in core behind a seeded host seam; the bootstrap hands it
   // the aggregated view catalog before the app scope creates the stores.

@@ -6,6 +6,7 @@ import {
 } from '@core/manifests/node/controllers';
 import { desktopDomainContracts } from '@core/manifests/shared/domain-contracts';
 import type { DesktopRuntimes } from '@main/gateway/desktop-runtimes';
+import { configureStudioWire } from '@main/gateway/studio-wire';
 import { appScope } from '../../core/app-scope';
 import { createDesktopWireOptions } from '../wiring';
 import type { DatabaseBundle } from './database';
@@ -42,7 +43,9 @@ export async function bootControllers(
         return [domain, controller] as const;
       })
     );
-    return { controllers: Object.fromEntries(entries), scope };
+    const controllers = Object.fromEntries(entries);
+    await configureStudioWire(controllers, infrastructure.ssh, infrastructure.hosts);
+    return { controllers, scope };
   } catch (error) {
     await scope.dispose(error);
     throw error;

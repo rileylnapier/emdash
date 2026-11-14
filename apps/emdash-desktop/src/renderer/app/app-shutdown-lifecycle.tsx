@@ -1,6 +1,7 @@
 import { Spinner, toast } from '@emdash/ui/react/primitives';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { openFileStore } from '@core/features/editor/api/browser/open-file-store/open-file-store';
+import { registerUpdatePreflight } from '@core/features/taixu/browser/update-controls';
 import { useOpenModal } from '@core/manifests/browser/modal-api';
 import type { ActiveSessionSummary } from '@core/primitives/desktop-host/api/host-contract';
 import { log } from '@core/primitives/logging/browser/logger';
@@ -16,6 +17,15 @@ export function AppShutdownLifecycle() {
   const shutdownStarted = useRef(false);
   const [shuttingDown, setShuttingDown] = useState(false);
   const [showOverlay, setShowOverlay] = useState(false);
+  useEffect(
+    () =>
+      registerUpdatePreflight(async () => {
+        if (openFileStore.dirtyEntries().length)
+          throw new Error('Save or discard unsaved files in Inspect work before updating Taixu.');
+        await mementoClient.flush();
+      }),
+    [mementoClient]
+  );
 
   const runQuitGuards = useCallback(
     async (requestId: string, summary: ActiveSessionSummary): Promise<boolean> => {
@@ -49,7 +59,7 @@ export function AppShutdownLifecycle() {
 
       if (activeRequestId.current !== requestId) return false;
       const confirmation = await openConfirmQuitModal({
-        title: 'Quit Emdash?',
+        title: 'Quit Taixu?',
         description: describeShutdownImpact(summary),
         confirmLabel: 'Quit',
       });
@@ -143,7 +153,7 @@ function ShutdownOverlay() {
       ref={overlay}
       role="alertdialog"
       aria-modal="true"
-      aria-label="Shutting down Emdash"
+      aria-label="Shutting down Taixu"
       tabIndex={-1}
       className="fixed inset-0 z-9999 flex items-center justify-center bg-background/95"
     >

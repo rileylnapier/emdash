@@ -81,6 +81,13 @@ export const tuiAgentsContract = defineContract({
     error: tuiInputErrorSchema,
   }),
 
+  /** Submit a follow-up only at a completed provider turn, without approving prompts. */
+  sendFollowup: fallible({
+    input: conv.extend({ text: z.string().trim().min(1).max(25000) }),
+    data: z.object({ status: z.enum(['sent', 'not-ready', 'interrupted']) }),
+    error: tuiInputErrorSchema,
+  }),
+
   /**
    * Resizes the PTY window. Should be called whenever the terminal UI is resized.
    */

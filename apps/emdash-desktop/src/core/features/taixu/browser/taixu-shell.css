@@ -59,6 +59,40 @@
   display: flex;
   gap: 8px;
 }
+.taixu-computers {
+  position: relative;
+  -webkit-app-region: no-drag;
+}
+.taixu-computer-panel {
+  position: absolute;
+  top: 40px;
+  left: 0;
+  z-index: 300;
+  width: 340px;
+  padding: 24px;
+  background: #181e32;
+  border: 1px solid #c9a24b55;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-shadow: 0 12px 40px #0008;
+}
+.taixu-computer-panel p,
+.taixu-computer-panel small {
+  font-size: 13px;
+  line-height: 1.5;
+  color: #efe6d2b0;
+}
+.taixu-computer-panel h2 {
+  font: 22px Georgia;
+}
+.taixu-sharing {
+  font-size: 13px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
 .taixu-actions button:last-child,
 .taixu-setup button {
   border-color: #c9a24b55;

@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   select: vi.fn(),
   list: vi.fn(),
   missingBranch: false,
+  stateArgs: vi.fn(),
 }));
 const repositoryUrl = 'https://gitlab.com/group/nested/repo';
 const mr = {
@@ -30,6 +31,9 @@ const mr = {
 };
 vi.mock('@core/features/projects/api/browser/stores/project-selectors', () => ({
   getProjectStore: () => ({}),
+  getProjectManagerStore: () => ({
+    projects: new Map([['project-1', { id: 'project-1', name: 'Suite' }]]),
+  }),
   projectData: () => ({ path: '/repo' }),
   getProjectViewStore: () => ({}),
   firstAvailableProjectId: () => 'project-1',
@@ -57,7 +61,8 @@ vi.mock('@core/features/tasks/api/browser/hooks/useTaskSettings', () => ({
 vi.mock('./use-create-task-state', async () => {
   const { useState } = await import('react');
   return {
-    useCreateTaskState: () => {
+    useCreateTaskState: (...args: unknown[]) => {
+      mocks.stateArgs(...args);
       const [linkedType, setLinkedType] = useState<string | null>(null);
       const [linkedPR, setLinkedPR] = useState(null);
       return {
@@ -100,6 +105,7 @@ vi.mock('@core/features/tasks/api/browser/task-state/task-selectors', () => ({
 }));
 vi.mock('@core/manifests/browser/modal-api', () => ({
   useModalController: () => ({}),
+  openModal: vi.fn(),
   useOpenModal: () => vi.fn(),
 }));
 vi.mock('@core/primitives/navigation/browser/navigation-hooks', () => ({
@@ -165,19 +171,23 @@ afterEach(async () => {
   host.remove();
   client.clear();
 });
-async function render() {
+async function render(initialName?: string) {
   await act(async () =>
     root.render(
       <QueryClientProvider client={client}>
         <Dialog.Root open>
           <Dialog.Content>
-            <CreateTaskModal projectId="project-1" />
+            <CreateTaskModal projectId="project-1" initialName={initialName} />
           </Dialog.Content>
         </Dialog.Root>
       </QueryClientProvider>
     )
   );
 }
+it('passes the handoff name into task and workspace state', async () => {
+  await render('taixu-building-models');
+  expect(mocks.stateArgs.mock.lastCall?.[9]).toBe('taixu-building-models');
+});
 it('enables GitLab MR selection and routes account and inventory reads to GitLab', async () => {
   await render();
   const toggle = page.getByRole('button', { name: 'Merge Request', exact: true });

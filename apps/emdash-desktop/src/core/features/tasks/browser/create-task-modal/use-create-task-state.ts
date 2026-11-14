@@ -6,6 +6,7 @@ import { getTasksWireClient } from '@core/features/tasks/api/browser/client';
 import { useTaskName } from '@core/features/tasks/api/browser/create-task-modal/use-task-name';
 import { useWorkspaceConfig } from '@core/features/tasks/api/browser/create-task-modal/use-workspace-config';
 import { useTaskSettings } from '@core/features/tasks/api/browser/hooks/useTaskSettings';
+import { normalizeTaskName } from '@core/features/tasks/api/browser/taskNames';
 import type { LinkedIssue } from '@core/primitives/linked-issues/api';
 import { useLinkedIssueContext } from '../issue-context/use-linked-issue-context';
 import { getIssueTaskName } from './issue-task-name';
@@ -23,7 +24,8 @@ export function useCreateTaskState(
   repositoryWorkspaceId: string | null | undefined,
   initialPR?: PullRequest,
   initialLinkedType: LinkedType = null,
-  initialWorkspaceId?: string
+  initialWorkspaceId?: string,
+  initialName?: string
 ) {
   const { autoGenerateName, createBranchAndWorktree, includeIssueContextByDefault } =
     useTaskSettings();
@@ -50,6 +52,7 @@ export function useCreateTaskState(
 
   // Stable random key for the "plain task" name generation — one per modal session.
   const randomKey = useMemo(() => crypto.randomUUID(), []);
+  const suggestedName = normalizeTaskName(initialName ?? '') || undefined;
 
   // Random name query — used when no issue/PR is selected yet.
   const hasLinkedEntity =
@@ -57,7 +60,7 @@ export function useCreateTaskState(
   const { data: randomName, isPending: isRandomPending } = useQuery({
     queryKey: ['generateTaskName', 'random', randomKey],
     queryFn: async () => (await getTasksWireClient()).generateTaskName({}),
-    enabled: autoGenerateName && !hasLinkedEntity,
+    enabled: autoGenerateName && !hasLinkedEntity && !suggestedName,
     refetchOnWindowFocus: false,
   });
 
@@ -100,15 +103,15 @@ export function useCreateTaskState(
     if (linkedType === 'pr' && linkedPR !== null) {
       return shouldGenerateFromPR ? prGeneratedName : undefined;
     }
-    // No entity selected yet — fall back to random placeholder name.
-    return autoGenerateName ? randomName : undefined;
+    // A supplied brief title works even when random names are disabled.
+    return suggestedName ?? (autoGenerateName ? randomName : undefined);
   })();
 
   const isPending = (() => {
     if (linkedType === 'issue' && linkedIssue !== null)
       return shouldGenerateFromIssue && isIssuePending;
     if (linkedType === 'pr' && linkedPR !== null) return shouldGenerateFromPR && isPRPending;
-    return autoGenerateName && isRandomPending;
+    return !suggestedName && autoGenerateName && isRandomPending;
   })();
 
   const taskName = useTaskName({

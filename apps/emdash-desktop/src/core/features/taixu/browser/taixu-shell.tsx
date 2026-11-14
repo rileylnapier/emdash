@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { getConversationsClient } from '@core/features/conversations/api/browser/client';
 import { settingsViewDef } from '@core/features/settings/contributions/views';
 import { taskViewDef } from '@core/features/tasks/contributions/views';
 import { confirmOpenExternalLink } from '@core/features/workbench/api/browser/open-external-link';
 import { openModal } from '@core/manifests/browser/modal-api';
 import { getNavigation } from '@core/primitives/navigation/browser/navigation-selectors';
 import { getTaixuClient } from '../api/browser/client';
+import { workOriginSchema, type WorkOrigin } from '../api/contract';
 import './taixu-shell.css';
+import { StudioSelector } from './studio-selector';
+import { UpdateButton } from './update-button';
 
 const heads = ['Product', 'Marketing', 'Design', 'Eng'];
 
@@ -66,10 +70,30 @@ export function TaixuShell({
     };
   }, [url]);
 
-  const createTask = useCallback(async (prompt?: string) => {
-    // Opening the native review dialog does not launch work. Its Create button owns that action.
-    await openModal('taskModal', { initialPrompt: prompt });
-  }, []);
+  const createTask = useCallback(
+    async (prompt?: string, projectId?: string, origin?: WorkOrigin, name?: string) => {
+      // Opening the native review dialog does not launch work. Its Create button owns that action.
+      if (projectId && !(await (await getTaixuClient()).projectExists({ projectId })))
+        throw new Error('Project unavailable');
+      const client = await getTaixuClient();
+      await openModal('taskModal', {
+        initialPrompt: prompt,
+        initialName: name,
+        projectId,
+        ...(origin
+          ? {
+              onBeforeCreate: async (task) => {
+                await client.linkWork({ ...task, origin });
+              },
+              onCreateFailed: async (task, error) => {
+                await client.linkWork({ ...task, origin, error });
+              },
+            }
+          : {}),
+      });
+    },
+    []
+  );
 
   useEffect(() => {
     const receive = (event: MessageEvent) => {
@@ -88,7 +112,19 @@ export function TaixuShell({
         !('action' in data)
       )
         return;
-      if (data.action === 'accounts' || data.action === 'usage') {
+      if (data.action === 'add-project') {
+        void openModal('addProjectModal', {
+          mode: 'pick',
+          strategy: 'local',
+          navigateOnCreate: false,
+          promptConfigImport: false,
+          onCreated: (projectId) =>
+            frame.current?.contentWindow?.postMessage(
+              { type: 'taixu-repository-added', projectId },
+              new URL(url).origin
+            ),
+        }).catch(() => setError('Could not open the repository picker.'));
+      } else if (data.action === 'accounts' || data.action === 'usage') {
         getNavigation().navigate(
           settingsViewDef({ tab: data.action === 'usage' ? 'usage' : 'clis-models' })
         );
@@ -99,9 +135,47 @@ export function TaixuShell({
         typeof data.prompt === 'string' &&
         data.prompt.length <= 65536
       ) {
-        void createTask(data.prompt).catch(() =>
-          setError('Could not open the task dialog. Try Inspect work.')
-        );
+        const origin = 'origin' in data ? workOriginSchema.safeParse(data.origin) : undefined;
+        if (origin && !origin.success) {
+          setError('The originating chat is unavailable. Reopen the brief and try again.');
+          return;
+        }
+        void createTask(
+          data.prompt,
+          'projectId' in data && typeof data.projectId === 'string' ? data.projectId : undefined,
+          origin?.success ? origin.data : undefined,
+          'name' in data && typeof data.name === 'string' && data.name.length <= 64
+            ? data.name
+            : undefined
+        ).catch(() => setError('Could not open the task dialog. Try Inspect work.'));
+      } else if (
+        data.action === 'review-merge' &&
+        'taskId' in data &&
+        typeof data.taskId === 'string' &&
+        'projectId' in data &&
+        typeof data.projectId === 'string'
+      ) {
+        const target = { taskId: data.taskId, projectId: data.projectId };
+        void getTaixuClient()
+          .then((client) => openModal('taixuMergeModal', { ...target, client }))
+          .catch(() => setError('Could not open the merge review. Reconnect and try again.'));
+      } else if (
+        data.action === 'followup-work' &&
+        'taskId' in data &&
+        typeof data.taskId === 'string' &&
+        'projectId' in data &&
+        typeof data.projectId === 'string' &&
+        'text' in data &&
+        typeof data.text === 'string' &&
+        data.text.length <= 24000
+      ) {
+        const target = { taskId: data.taskId, projectId: data.projectId, initialText: data.text };
+        void Promise.all([getTaixuClient(), getConversationsClient()])
+          .then(async ([client, conversations]) => {
+            if (!(await client.taskExists(target))) throw new Error('Work unavailable');
+            await openModal('taixuFollowupModal', { ...target, client, conversations });
+          })
+          .catch(() => setError('Could not open this work for changes. Reconnect and try again.'));
       } else if (
         data.action === 'inspect-task' &&
         'taskId' in data &&
@@ -145,7 +219,21 @@ export function TaixuShell({
         <button className="taixu-brand" onClick={() => inspect(false)}>
           Taixu <span>LoveLife</span>
         </button>
+        <StudioSelector />
         <nav aria-label="The Heads">
+          <button
+            disabled={!url}
+            onClick={() => {
+              inspect(false);
+              if (url)
+                frame.current?.contentWindow?.postMessage(
+                  { type: 'taixu-projects' },
+                  new URL(url).origin
+                );
+            }}
+          >
+            Your projects
+          </button>
           {heads.map((h) => (
             <button key={h} onClick={() => talk(h)} disabled={!url}>
               {h}
@@ -153,6 +241,7 @@ export function TaixuShell({
           ))}
         </nav>
         <div className="taixu-actions">
+          <UpdateButton />
           <button
             onClick={() => {
               getNavigation().navigate(settingsViewDef({ tab: 'clis-models' }));
@@ -193,12 +282,10 @@ export function TaixuShell({
           <div className="taixu-setup">
             <h1>A place for your work.</h1>
             <p>
-              {busy
-                ? 'Opening Taixu…'
-                : 'Connect your LoveLife folder to bring the village and the Heads into your desktop.'}
+              {busy ? 'Opening Taixu…' : 'Open Taixu, then add a repository from Your projects.'}
             </p>
-            <button disabled={busy} onClick={() => void connect(true)}>
-              Choose LoveLife folder
+            <button disabled={busy} onClick={() => void connect()}>
+              Open Taixu
             </button>
           </div>
         )}
@@ -213,9 +300,6 @@ export function TaixuShell({
           <span>{error}</span>
           <button disabled={busy} onClick={() => void connect()}>
             Retry
-          </button>
-          <button disabled={busy} onClick={() => void connect(true)}>
-            Choose folder
           </button>
           <button onClick={() => setError(null)} aria-label="Dismiss">
             ×
