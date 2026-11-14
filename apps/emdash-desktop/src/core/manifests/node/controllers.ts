@@ -59,6 +59,7 @@ import { createSourceControlWireController } from '@core/features/source-control
 import { createTaixuWireController } from '@core/features/taixu/node/wire-controller';
 import { createWorkArchive } from '@core/features/taixu/node/work-archive';
 import { createWorkFollowup } from '@core/features/taixu/node/work-followup';
+import { createWorkImageContext } from '@core/features/taixu/node/work-image-context';
 import { createWorkMerge } from '@core/features/taixu/node/work-merge';
 import { createWorkHeadReader } from '@core/features/taixu/node/work-merge-head';
 import { finalWorkReply } from '@core/features/taixu/node/work-reply';
@@ -513,6 +514,7 @@ export const desktopNodeControllers = {
           workspaceIdentity,
         }),
         onAgentEvent: onTaixuAgentEvent,
+        readWorkImageContext: createWorkImageContext({ taskService, workspaceIdentity }),
         readWorkReply: async (event) => {
           const conversation = (await getConversations(db)).find(
             (c) =>

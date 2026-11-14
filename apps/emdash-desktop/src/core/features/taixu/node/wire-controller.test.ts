@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   getTasks: vi.fn(),
   prepareFollowup: vi.fn(),
   readWorkReply: vi.fn(),
+  readWorkImageContext: vi.fn(),
   reviewMerge: vi.fn(),
   observeWork: vi.fn(),
   approveMerge: vi.fn(),
@@ -199,6 +200,7 @@ beforeEach(async () => {
     env: { OPENAI_API_KEY: 'private-key', NODE_OPTIONS: 'must-not-pass' },
   });
   mocks.getTasks.mockResolvedValue([]);
+  mocks.readWorkImageContext.mockResolvedValue(null);
   mocks.observeWork.mockImplementation(async (target) => ({
     ...target,
     status: 'open',
@@ -249,6 +251,7 @@ beforeEach(async () => {
       taskService: { getTasks: mocks.getTasks },
       prepareFollowup: mocks.prepareFollowup,
       readWorkReply: mocks.readWorkReply,
+      readWorkImageContext: mocks.readWorkImageContext,
       archiveWork: Object.assign(mocks.archiveWork, { restore: mocks.restoreWork }),
       workMerge: {
         review: mocks.reviewMerge,
@@ -455,7 +458,7 @@ it('fails the receipt if the utility exits before confirming its save', async ()
 });
 
 async function headRequest(
-  action: 'send' | 'refresh',
+  action: 'send' | 'refresh' | 'image-context',
   input: unknown,
   expiresAt = Date.now() + 60000
 ) {
@@ -633,4 +636,53 @@ it('does not archive without a durable intent, and records readiness blockers', 
   });
   await expect(wire.client.archiveWork({ ...target, projectId: 'other' })).rejects.toThrow();
   expect(mocks.archiveWork).toHaveBeenCalledTimes(1);
+});
+
+it('resolves screenshot identity privately for linked reports and legacy refreshes only', async () => {
+  await linkedWork();
+  mocks.readWorkImageContext.mockResolvedValue({ workspacePath: '/trusted/task' });
+  const event: AgentEvent = {
+    ...followup,
+    providerId: 'claude',
+    type: 'stop',
+    timestamp: Date.now(),
+    payload: { lastAssistantMessage: '![screen](/untrusted/secret.png)' },
+  };
+  await agentEvent({ ...event, projectId: 'unlinked' });
+  expect(mocks.readWorkImageContext).not.toHaveBeenCalled();
+  await agentEvent(event);
+  const report = worker.postMessage.mock.calls.find(([m]) => m.type === 'work-event')?.[0];
+  expect(report.event.imageContext).toEqual({ workspacePath: '/trusted/task' });
+  expect(mocks.readWorkImageContext).toHaveBeenCalledWith({ taskId, projectId: 'project' });
+  mocks.readWorkImageContext.mockClear();
+  const response = await headRequest('image-context', {
+    targets: [
+      { taskId, projectId: 'project' },
+      { taskId, projectId: 'unlinked' },
+    ],
+    workspacePath: '/caller-cannot-choose',
+  });
+  expect(response.result).toEqual([
+    { taskId, projectId: 'project', workspacePath: '/trusted/task' },
+  ]);
+  expect(mocks.readWorkImageContext).toHaveBeenCalledTimes(1);
+  expect(mocks.observeWork).not.toHaveBeenCalled();
+});
+
+it('retains a report when image identity is temporarily unavailable', async () => {
+  await linkedWork();
+  mocks.readWorkImageContext.mockRejectedValue(new Error('offline'));
+  await agentEvent({
+    ...followup,
+    providerId: 'codex',
+    type: 'stop',
+    timestamp: Date.now(),
+    payload: { lastAssistantMessage: './screen.png' },
+  });
+  const report = worker.postMessage.mock.calls.find(([m]) => m.type === 'work-event')?.[0];
+  expect(report.event.imageContext).toBeUndefined();
+  expect(report.event.payload.lastAssistantMessage).toBe('./screen.png');
+  expect(
+    (await headRequest('image-context', { targets: [{ taskId, projectId: 'project' }] })).result
+  ).toEqual([]);
 });

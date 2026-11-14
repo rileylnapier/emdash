@@ -36,6 +36,7 @@ export function createTaixuWireController({
   resolveProvider,
   onAgentEvent,
   readWorkReply,
+  readWorkImageContext,
   prepareFollowup,
   workMerge,
   archiveWork,
@@ -49,6 +50,7 @@ export function createTaixuWireController({
   archiveWork?: ArchiveWork;
   prepareFollowup?: (input: WorkFollowup) => Promise<() => Promise<void>>;
   readWorkReply?: (event: AgentEvent) => Promise<string | undefined>;
+  readWorkImageContext?: (target: WorkTarget) => Promise<{ workspacePath: string } | null>;
   resolveProvider: (
     provider: 'claude' | 'codex'
   ) => Promise<{ bin: string; env: Record<string, string> }>;
@@ -60,7 +62,8 @@ export function createTaixuWireController({
   let activeSubmissions = 0;
   let updateHeld = false;
   const targets = new Map<string, string>();
-  const pendingEvents = new Map<string, AgentEvent>();
+  type WorkReport = AgentEvent & { imageContext?: { workspacePath: string } | null };
+  const pendingEvents = new Map<string, WorkReport>();
   const targetSchema = z.array(z.object({ taskId: z.string(), projectId: z.string() }));
   function replayEvents(worker: UtilityProcess) {
     for (const [id, event] of pendingEvents) worker.postMessage({ type: 'work-event', id, event });
@@ -78,7 +81,7 @@ export function createTaixuWireController({
           }
         }
         // Only bounded, attributed reports for explicitly linked tasks cross this channel.
-        const report: AgentEvent = {
+        const report: WorkReport = {
           type: event.type,
           providerId: event.providerId,
           projectId: event.projectId,
@@ -91,6 +94,16 @@ export function createTaixuWireController({
             lastAssistantMessage: reply?.slice(0, 24000),
           },
         };
+        if (event.type === 'stop' && readWorkImageContext) {
+          try {
+            report.imageContext = await readWorkImageContext({
+              taskId: event.taskId,
+              projectId: event.projectId,
+            });
+          } catch {
+            /* A later chat refresh can recover the image context. */
+          }
+        }
         pendingEvents.set(randomUUID(), report);
         try {
           if (child) replayEvents(child);
@@ -341,7 +354,7 @@ export function createTaixuWireController({
           const request = z
             .object({
               id: z.string().uuid(),
-              action: z.enum(['refresh', 'send']),
+              action: z.enum(['refresh', 'send', 'image-context']),
               input: z.unknown(),
               expiresAt: z.number().int().positive(),
             })
@@ -358,6 +371,21 @@ export function createTaixuWireController({
             const { targets: requested } = z
               .object({ targets: z.array(workTargetSchema).max(100) })
               .parse(input);
+            if (action === 'image-context') {
+              const contexts: (WorkTarget & { workspacePath?: string })[] = [];
+              for (const target of requested) {
+                if (!canSubmit() || updateHeld) break;
+                if (targets.get(target.taskId) !== target.projectId || !readWorkImageContext)
+                  continue;
+                try {
+                  const context = await readWorkImageContext(target);
+                  contexts.push({ ...target, ...context });
+                } catch {
+                  /* Leave unresolved reports eligible for a later refresh. */
+                }
+              }
+              return contexts;
+            }
             const observations: Awaited<ReturnType<NonNullable<typeof workMerge>['observe']>>[] =
               [];
             // Only explicit linked targets; no background GitHub polling or broad account scan.
