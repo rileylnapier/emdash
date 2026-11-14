@@ -1,6 +1,7 @@
 import type { EmdashAccountService } from '@core/features/account/node/services/emdash-account-service';
 import { provisionWorkspaceErrorToWorkspaceError } from '@core/features/workspaces/node/wire-controller';
 import type { DesktopControllerContext } from '@core/manifests/node/controllers';
+import { agentStatusService } from '@main/core/agent-status/agent-status-service';
 import { appOperations } from '@main/core/app/controller';
 import { terminalFileSources } from '@main/core/app/persist-terminal-attachment';
 import {
@@ -107,6 +108,7 @@ export function createDesktopWireOptions(
       writeRendererLog: (input) => writeRendererLogEntry(input),
     },
     notifications: services.notifications,
+    onTaixuAgentEvent: (listener) => agentStatusService.on('agent:event', listener),
     previewServerAccess: services.previewServerAccess,
     projectDeletion: services.projectDeletion,
     promptLibrary: services.promptLibrary,

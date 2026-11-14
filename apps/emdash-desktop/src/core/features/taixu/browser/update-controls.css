@@ -1,0 +1,81 @@
+.taixu-update {
+  position: relative;
+  font: 13px system-ui;
+  -webkit-app-region: no-drag;
+  text-align: left;
+}
+.taixu-update summary {
+  cursor: pointer;
+  padding: 6px 12px;
+  border-radius: 6px;
+  color: #c9a24b;
+  white-space: nowrap;
+}
+.taixu-update summary:focus-visible {
+  outline: 2px solid #c9a24b;
+}
+.taixu-update-panel {
+  position: absolute;
+  right: 0;
+  top: 32px;
+  z-index: 1000;
+  width: min(400px, 80vw);
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: 24px;
+  border: 1px solid #c9a24b55;
+  border-radius: 10px;
+  background: #181e32;
+  color: #efe6d2;
+  box-shadow: 0 12px 40px #0008;
+}
+.taixu-update-panel h2 {
+  font: 24px Georgia;
+  margin: 0 0 16px;
+}
+.taixu-update-panel p {
+  font: 13px/1.6 system-ui;
+  margin: 12px 0;
+  overflow-wrap: anywhere;
+}
+.taixu-update-panel .taixu-release-notes {
+  white-space: pre-wrap;
+}
+.taixu-update-panel progress {
+  width: 100%;
+  accent-color: #c9a24b;
+}
+.taixu-update-panel button {
+  color: #efe6d2;
+  background: transparent;
+  border: 1px solid #c9a24b55;
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin: 8px 8px 0 0;
+  cursor: pointer;
+}
+.taixu-update-panel button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+#taixu-connection-gate .taixu-update-panel {
+  position: static;
+  margin-top: 12px;
+  max-height: 40vh;
+}
+#taixu-connection-gate {
+  overflow-y: auto;
+}
+
+.taixu-update-hold {
+  background: #181e32;
+  color: #efe6d2;
+  border: 1px solid #c9a24b;
+  border-radius: 12px;
+  padding: 32px;
+  font: 16px/1.6 system-ui;
+  margin: auto;
+}
+.taixu-update-hold::backdrop {
+  background: #0e1328df;
+}

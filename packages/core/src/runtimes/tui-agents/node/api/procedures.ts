@@ -36,6 +36,9 @@ export function createTuiAgentsProcedures(runtime: TuiAgentsRuntime) {
     sendInput(input: { conversationId: string; data: string }): Result<void, TuiInputError> {
       return runtime.sendInput(input.conversationId, input.data);
     },
+    sendFollowup(input: { conversationId: string; text: string }) {
+      return runtime.sendFollowup(input.conversationId, input.text);
+    },
     resize(input: {
       conversationId: string;
       cols: number;

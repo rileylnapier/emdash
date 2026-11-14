@@ -64,6 +64,8 @@ export default defineConfig({
         exclude: workspacePackages,
       },
       rollupOptions: {
+        // Electron supplies this built-in physical filesystem at runtime.
+        external: ['original-fs'],
         input: {
           index: resolve('src/entry/main.ts'),
           ...desktopWorkerBuildInputs(),

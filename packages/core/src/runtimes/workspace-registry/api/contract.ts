@@ -251,6 +251,19 @@ export const workspaceRegistryContract = defineContract({
   }),
 
   /**
+   * Archive cleanup: remove only ignored node_modules for tracked, locked packages.
+   * Keeps checkout, branches, history and other ignored data. Refuses live sessions
+   * and dirty source, including nested repositories. checkOnly is a read-only Git
+   * preflight that can run before closing idle sessions.
+   */
+  cleanDependencies: fallible({
+    input: z.object({ workspaceId: z.string().min(1), checkOnly: z.boolean().optional() }),
+    data: z.object({ removed: z.array(z.string()), retained: z.array(z.string()) }),
+    error: cleanArtifactsErrorSchema,
+    callTimeoutMs: 0,
+  }),
+
+  /**
    * Removes the workspace's artifacts in place — exactly what measureUsage reports as
    * reclaimable. Tracked files, uncommitted changes, untracked files that are not
    * ignored, local env files, preserved files, `.emdash.json`, nested repositories,

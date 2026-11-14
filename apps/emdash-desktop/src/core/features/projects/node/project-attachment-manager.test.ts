@@ -611,7 +611,7 @@ describe('ProjectAttachmentManager', () => {
     await scope.dispose();
   });
 
-  it('releases and disposes retained Provider ownership at most once during shutdown', async () => {
+  it('releases shutdown ownership once without tearing down remote work', async () => {
     const scope = createScope({ label: 'project-attachment-manager-test' });
     const availability = createWorkerHostAvailability({
       scope,
@@ -638,7 +638,7 @@ describe('ProjectAttachmentManager', () => {
 
     await manager.dispose();
     await manager.dispose();
-    expect(provider.dispose).toHaveBeenCalledOnce();
+    expect(provider.dispose).not.toHaveBeenCalled();
 
     await owner.dispose();
     await scope.dispose();
@@ -1132,7 +1132,8 @@ describe('ProjectAttachmentManager', () => {
     await manager.release();
     opened.resolve(ok(provider));
 
-    await vi.waitFor(() => expect(provider.dispose).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(provider.release).toHaveBeenCalledOnce());
+    expect(provider.dispose).not.toHaveBeenCalled();
     expect(manager.requireAttached(project.id).success).toBe(false);
     expect(peek(state).kind).toBe('absent');
 

@@ -3,7 +3,7 @@ import { startUserEnvCapture } from '@main/lib/userEnv';
 import { appScope } from '../core/app-scope';
 import type { AppConfig } from '../core/config';
 import { step, stepOptional } from '../core/phase';
-import { configureShutdownRuntimeClients } from '../shutdown';
+import { configureShutdownRuntimeClients, configureUpdateActivityCheck } from '../shutdown';
 import { configureQuitCleanupServices } from '../shutdown/phases';
 import { bootBackground } from './phases/background';
 import { bootControllers } from './phases/controllers';
@@ -43,6 +43,12 @@ export async function finishBoot(config: AppConfig): Promise<void> {
     configureShutdownRuntimeClients(runtimes.broker, () =>
       services.hostAttachments.attachedHosts()
     );
+    configureUpdateActivityCheck(async () => {
+      if ((await databaseBundle.editorBuffer.listBuffers()).length)
+        throw new Error('Save or discard unsaved files in Inspect work before updating Taixu.');
+      if ((await services.automations.list()).some((a) => a.enabled))
+        throw new Error('Pause scheduled automations before updating Taixu.');
+    });
     const controllers = await step('controllers', () =>
       bootControllers(databaseBundle, infrastructure, runtimes, services)
     );

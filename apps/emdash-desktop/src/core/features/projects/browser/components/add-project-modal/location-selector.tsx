@@ -9,6 +9,7 @@ import type { Strategy } from './add-project-modal';
 type MachineOption = SshConfig & { id: string };
 
 interface LocationSelectorProps {
+  studioName?: string | null;
   strategy: Strategy;
   connectionId?: string;
   machines: MachineOption[];
@@ -19,6 +20,7 @@ interface LocationSelectorProps {
 }
 
 export function LocationSelector({
+  studioName,
   strategy,
   connectionId,
   machines,
@@ -37,6 +39,17 @@ export function LocationSelector({
     return machines.filter((machine) => machine.name.toLowerCase().includes(normalizedQuery));
   }, [machines, query]);
   const triggerStatus = getMachineStatusKind(strategy === 'ssh' ? connectionId : undefined);
+
+  if (studioName)
+    return (
+      <span
+        className="max-w-64 truncate text-sm text-foreground-muted"
+        aria-label="Project location"
+        title={studioName}
+      >
+        {studioName}
+      </span>
+    );
 
   return (
     <DropdownMenu.Root>

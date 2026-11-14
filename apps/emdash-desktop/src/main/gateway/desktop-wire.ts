@@ -1,6 +1,7 @@
 import type { PendingLease } from '@emdash/shared';
 import { exposeWireToWindows, WireError, type Controller, type LiveSource } from '@emdash/wire/rpc';
 import { ipcMain, MessageChannelMain } from 'electron';
+import { guardedDesktopCall } from '@core/features/taixu/node/update-guard';
 import { DESKTOP_WIRE_CHANNEL } from '@core/manifests/shared/wire-channels';
 import type { ControllersBundle } from '@main/bootstrap/boot/phases/controllers';
 import { appScope } from '@main/bootstrap/core/app-scope';
@@ -50,7 +51,7 @@ function createLazyRoutingController(): Controller {
     async call(path, input, meta) {
       const controllers = registeredControllers ?? (await controllersPromise);
       const routed = route(path, controllers);
-      return await routed.controller.call(routed.path, input, meta);
+      return guardedDesktopCall(path, () => routed.controller.call(routed.path, input, meta));
     },
     resolveLive(topic) {
       if (registeredControllers) {

@@ -18,6 +18,7 @@ import type {
 } from '@core/features/projects/browser/stores/project-creation-types';
 import { projectViewDef } from '@core/features/projects/contributions/views';
 import { settingsViewDef } from '@core/features/settings/contributions/views';
+import { getStudioComputerName } from '@core/features/taixu/api/browser/studio-client';
 import { useModalController, useOpenModal } from '@core/manifests/browser/modal-api';
 import { isGitHubAccountSummary } from '@core/primitives/github/api';
 import { ConfirmButton } from '@core/primitives/keybindings/browser/confirm-button';
@@ -44,6 +45,9 @@ export interface AddProjectModalProps {
   connectionId?: string;
   /** Keep a parent task dialog and its draft open when adding a project from it. */
   navigateOnCreate?: boolean;
+  /** Receive the registered project only after creation succeeds. */
+  onCreated?: (projectId: string) => void;
+  promptConfigImport?: boolean;
 }
 
 export const AddProjectModal = observer(function AddProjectModal({
@@ -51,11 +55,18 @@ export const AddProjectModal = observer(function AddProjectModal({
   mode: modeProp,
   connectionId: connectionIdProp,
   navigateOnCreate = true,
+  onCreated,
+  promptConfigImport = true,
 }: AddProjectModalProps) {
   const modal = useModalController('addProjectModal');
-  const [strategy, setStrategy] = useState<Strategy>(strategyProp ?? 'local');
+  const studioName = getStudioComputerName();
+  const [strategy, setStrategy] = useState<Strategy>(
+    studioName ? 'local' : (strategyProp ?? 'local')
+  );
   const [mode, setMode] = useState<Mode>(modeProp ?? 'pick');
-  const [connectionId, setConnectionId] = useState<string | undefined>(connectionIdProp);
+  const [connectionId, setConnectionId] = useState<string | undefined>(
+    studioName ? undefined : connectionIdProp
+  );
   const [submitState, setSubmitState] = useState<'idle' | 'creating'>('idle');
   const { connections } = getMachinesStore();
   const availableConnections = useMemo(
@@ -212,7 +223,11 @@ export const AddProjectModal = observer(function AddProjectModal({
     return (
       <UntrustedRepositoryNotice
         dubiousOwnership={dubiousOwnership}
-        hostLabel={host.type === 'ssh' ? (machineName ?? 'the remote machine') : 'this computer'}
+        hostLabel={
+          host.type === 'ssh'
+            ? (machineName ?? 'the remote machine')
+            : (studioName ?? 'this computer')
+        }
         confirm={async (confirmation) => (await openConfirmAction(confirmation)).success}
         trust={async () =>
           (await getProjectsWireClient()).trustRepository({
@@ -294,6 +309,7 @@ export const AddProjectModal = observer(function AddProjectModal({
       modal.setCloseGuard(false);
 
       if (result.kind === 'existing') {
+        onCreated?.(result.projectId);
         setSubmitState('idle');
         modal.dismiss();
         if (navigateOnCreate) navigate(projectViewDef({ projectId: result.projectId }));
@@ -303,7 +319,8 @@ export const AddProjectModal = observer(function AddProjectModal({
       void result.completion
         .then((completion) => {
           if (completion.success) {
-            void maybeShowProjectConfigImportPrompt(result.projectId);
+            onCreated?.(result.projectId);
+            if (promptConfigImport) void maybeShowProjectConfigImportPrompt(result.projectId);
             return;
           }
           log.error(completion.error);
@@ -355,6 +372,7 @@ export const AddProjectModal = observer(function AddProjectModal({
               onChange={(e) => projectName.handleNameChange(e.target.value)}
             />
             <LocationSelector
+              studioName={studioName}
               strategy={strategy}
               connectionId={selectedConnectionId}
               machines={availableConnections}
@@ -374,6 +392,12 @@ export const AddProjectModal = observer(function AddProjectModal({
               }}
             />
           </div>
+          {studioName && (
+            <p className="text-sm text-foreground-muted">
+              Browse, create or clone repositories on {studioName}. Repositories and workspaces stay
+              on that computer.
+            </p>
+          )}
           <div className="flex w-full gap-2">
             <ModeCard
               mode="pick"

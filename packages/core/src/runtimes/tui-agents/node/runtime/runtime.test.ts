@@ -114,6 +114,109 @@ function startInput(overrides: Partial<TuiAgentStartInput> = {}): TuiAgentStartI
 }
 
 describe('TuiAgentsRuntime', () => {
+  it.each(['claude', 'codex'])(
+    'submits a guarded follow-up to the existing %s session',
+    async (providerId) => {
+      const clock = createManualClock();
+      const { runtime, spawner } = createRuntime({ clock });
+      try {
+        await runtime.startSession(startInput({ providerId }));
+        await clock.advanceBy(10);
+        runtime['agentStates'].applyCanonicalEvent('conversation-1', providerId, {
+          kind: 'status',
+          type: 'stop',
+        });
+        await clock.advanceBy(10);
+        const before = spawner.processes[0]!.writes.length;
+        const sending = runtime.sendFollowup(
+          'conversation-1',
+          'Smaller roof\nKeep the windows\x1b'
+        );
+        expect(await runtime.sendFollowup('conversation-1', 'Duplicate')).toEqual(
+          ok({ status: 'not-ready' })
+        );
+        expect(await sending).toEqual(ok({ status: 'sent' }));
+        expect(spawner.processes).toHaveLength(1);
+        expect(spawner.processes[0]!.writes.slice(before)).toEqual([
+          '\x1b[200~Smaller roof\nKeep the windows\x1b[201~',
+          '\r',
+        ]);
+        expect(await runtime.sendFollowup('conversation-1', 'Again')).toEqual(
+          ok({ status: 'not-ready' })
+        );
+      } finally {
+        await runtime.dispose();
+      }
+    }
+  );
+
+  it.each(['busy', 'permission', 'draft', 'stopped'])(
+    'does not paste into a %s session',
+    async (state) => {
+      const clock = createManualClock();
+      const { runtime, spawner } = createRuntime({ clock });
+      try {
+        await runtime.startSession(startInput({ providerId: 'claude' }));
+        await clock.advanceBy(10);
+        runtime['agentStates'].applyCanonicalEvent('conversation-1', 'claude', {
+          kind: 'status',
+          type: 'stop',
+        });
+        await clock.advanceBy(10);
+        if (state === 'busy')
+          runtime['agentStates'].applyCanonicalEvent('conversation-1', 'claude', {
+            kind: 'status',
+            type: 'start',
+          });
+        if (state === 'permission')
+          runtime['agentStates'].applyCanonicalEvent('conversation-1', 'claude', {
+            kind: 'status',
+            type: 'notification',
+            notificationType: 'permission_prompt',
+          });
+        if (state === 'draft') runtime.sendInput('conversation-1', 'my draft');
+        if (state === 'stopped') await runtime.stopSession('conversation-1');
+        const before = [...spawner.processes[0]!.writes];
+        const result = await runtime.sendFollowup('conversation-1', 'Changes');
+        expect(result.success && result.data.status === 'sent').toBe(false);
+        expect(spawner.processes[0]!.writes).toEqual(before);
+      } finally {
+        await runtime.dispose();
+      }
+    }
+  );
+
+  it.each(['input', 'permission', 'exit'])(
+    'does not press Enter if %s changes after pasting',
+    async (change) => {
+      const clock = createManualClock();
+      const { runtime, spawner } = createRuntime({ clock });
+      try {
+        await runtime.startSession(startInput({ providerId: 'codex' }));
+        await clock.advanceBy(10);
+        runtime['agentStates'].applyCanonicalEvent('conversation-1', 'codex', {
+          kind: 'status',
+          type: 'stop',
+        });
+        await clock.advanceBy(10);
+        const before = spawner.processes[0]!.writes.length;
+        const sending = runtime.sendFollowup('conversation-1', 'Changes');
+        if (change === 'input') runtime.sendInput('conversation-1', 'manual');
+        if (change === 'permission')
+          runtime['agentStates'].applyCanonicalEvent('conversation-1', 'codex', {
+            kind: 'status',
+            type: 'notification',
+            notificationType: 'permission_prompt',
+          });
+        if (change === 'exit') await runtime.stopSession('conversation-1');
+        expect(await sending).toEqual(ok({ status: 'interrupted' }));
+        expect(spawner.processes[0]!.writes.slice(before)).not.toContain('\r');
+      } finally {
+        await runtime.dispose();
+      }
+    }
+  );
+
   it.each(['fresh', 'resume'] as const)(
     'recovers a %s launch using the session id captured after switching sessions',
     async (mode) => {

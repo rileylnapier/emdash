@@ -151,3 +151,30 @@ Dependency assessment recorded on 2026-09-01:
   the GitHub Actions job level rather than publishing a partial updater release.
 - changelog and auto-update behavior are separate but related surfaces in the app
 - the `finalize-release` CI job requires `contents: write` permission and the default `GITHUB_TOKEN`
+
+## Taixu private Studio updates
+
+The Taixu coordinator reads each installation's build before reserving it. Only a Mac that
+needs the staged release may be prepared, quiesced or committed. A current Studio stays
+running during a laptop-only update. Readiness checks use the restarting installation's
+runtime broker and its local host, including when no local project is attached. A host
+reference such as `local:local` is relative to that broker; renderer state may be routed
+from Studio and must not be used to infer laptop ownership. Attached SSH hosts are not
+shut down by disconnecting the desktop. Preserve local Head, unsaved buffer, scheduled
+work and commit-time activity checks.
+
+`preparing` means readiness is being checked. `installing` is shown only after a restart
+commit is accepted. A refused readiness check becomes `blocked`, retains the staged
+verified release, and offers a direct install retry without downloading again. Periodic
+checks must not replace a ready or blocked release. A lost Studio commit reply requires
+observing its target build before proceeding; never replay that commit on retry.
+
+Laptop shutdown disposes the Studio connection without clearing `taixu-studio.json`.
+Startup reconnects the saved selection and still requires a matching desktop fingerprint.
+The versioned maintenance contract remains readable across build differences. Archive
+checksums and commit-time bundle signature, signer, fingerprint and architecture validation
+remain mandatory. macOS `lipo` expects the executable before `-verify_arch`.
+
+Focused coverage: Taixu `update-coordinator`, `update-host`, `update-guard`, `update-activity`,
+`update-files` and `studio` node tests; shutdown `index` tests; headless `taixu-updates` and
+`studio-startup` browser tests. These use isolated fixtures and no paid model calls.

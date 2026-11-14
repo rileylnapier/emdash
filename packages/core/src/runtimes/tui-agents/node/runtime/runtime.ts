@@ -80,6 +80,9 @@ type TuiAgentSession = {
   provider: ResolvedTuiProvider | null;
   /** True when installed start hooks + hook server are expected to drive working status. */
   startHooksActive: boolean;
+  /** Detect other input between a guarded paste and its separate submit write. */
+  inputRevision?: number;
+  followupPending?: boolean;
 };
 
 type RetainedOutput = {
@@ -435,6 +438,7 @@ export class TuiAgentsRuntime {
   sendInput(conversationId: string, data: string): Result<void, TuiInputError> {
     const active = this.sessions.get(conversationId);
     if (!active?.pty) return err({ type: 'not-found', conversationId });
+    active.inputRevision = (active.inputRevision ?? 0) + 1;
     active.pty.write(data);
     this.lifecycle.recordInput(conversationId);
     this.agentStates.markInputSubmitted(
@@ -444,6 +448,54 @@ export class TuiAgentsRuntime {
       active.startHooksActive
     );
     return ok(undefined);
+  }
+
+  async sendFollowup(
+    conversationId: string,
+    text: string
+  ): Promise<Result<{ status: 'sent' | 'not-ready' | 'interrupted' }, TuiInputError>> {
+    const active = this.sessions.get(conversationId);
+    const session = peek(this.sessionsList.states.list)[conversationId];
+    const agent = this.agentStates.current(conversationId);
+    if (!active?.pty) return ok({ status: 'not-ready' });
+    if (
+      active.followupPending ||
+      !['claude', 'codex'].includes(agent?.providerId ?? '') ||
+      session?.status !== 'running' ||
+      agent?.status !== 'completed' ||
+      agent.source !== 'hook' ||
+      (session.lastInputAt ?? 0) >= agent.updatedAt
+    )
+      return ok({ status: 'not-ready' });
+    // No await between the live checks and the paste. Strip terminal controls,
+    // including embedded bracketed-paste delimiters, from the instruction text.
+    const clean = text
+      .replace(/\r\n?/g, '\n')
+      .replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, '')
+      .trim();
+    if (!clean) return ok({ status: 'not-ready' });
+    active.followupPending = true;
+    try {
+      const pty = active.pty;
+      const pasted = this.sendInput(conversationId, `\x1b[200~${clean}\x1b[201~`);
+      if (!pasted.success) return pasted;
+      const revision = active.inputRevision;
+      // Claude needs Enter separately. Any input, prompt or lifecycle change during
+      // this gap leaves the paste unsubmitted for the user to inspect.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      if (
+        this.sessions.get(conversationId) !== active ||
+        active.pty !== pty ||
+        active.inputRevision !== revision ||
+        this.agentStates.current(conversationId) !== agent ||
+        peek(this.sessionsList.states.list)[conversationId]?.status !== 'running'
+      )
+        return ok({ status: 'interrupted' });
+      const submitted = this.sendInput(conversationId, '\r');
+      return submitted.success ? ok({ status: 'sent' }) : submitted;
+    } finally {
+      active.followupPending = false;
+    }
   }
 
   resize(conversationId: string, cols: number, rows: number): Result<void, TuiInputError> {
