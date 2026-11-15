@@ -169,6 +169,19 @@
     34px Georgia,
     serif;
 }
+.taixu-server-identity {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+.taixu-server-version {
+  color: #efe6d299;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
 .taixu-server-status-panel > p,
 .taixu-server-footer p {
   margin: 0;

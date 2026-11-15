@@ -171,6 +171,7 @@ it('persists local server mode without forwarding calls or changing sharing', as
     hosts: { onInvalidate: () => () => {} },
     local: controller(local),
     userData: root,
+    version: '1.3.0',
     build: 'test',
     expose: vi.fn(() => async () => {}),
     applyServerMode,
@@ -185,7 +186,12 @@ it('persists local server mode without forwarding calls or changing sharing', as
     () => service.dispose(),
     () => wire.dispose()
   );
-  expect(await wire.client.status()).toMatchObject({ serverMode: false, sharing: false });
+  expect(await wire.client.status()).toMatchObject({
+    serverMode: false,
+    sharing: false,
+    version: '1.3.0',
+    build: 'test',
+  });
   await wire.client.setServerMode({ enabled: true });
   expect(applyServerMode).toHaveBeenLastCalledWith(true);
   expect(await wire.client.status()).toMatchObject({ serverMode: true, sharing: false });
@@ -215,6 +221,7 @@ it('does not change the window or preference after a failed server-mode save', a
     hosts: { onInvalidate: () => () => {} },
     local: controller(async () => null),
     userData: root,
+    version: '1.3.0',
     build: 'test',
     expose: () => async () => {},
     applyServerMode,
@@ -273,6 +280,7 @@ it('shares Studio IDs and HTTP, fences identity changes, reconnects, and returns
     },
     local: controller(async () => 'local'),
     userData: root,
+    version: '1.3.0',
     build: 'test',
     expose: (c) => {
       gateway = c;
@@ -327,6 +335,7 @@ it('cancels a pending SSH connection without waiting or exposing a late gateway'
     hosts: { onInvalidate: () => () => {} },
     local: controller(async () => null),
     userData: root,
+    version: '1.3.0',
     build: 'test',
     expose,
   });
@@ -402,6 +411,7 @@ it('reopens the saved Studio with the matching build after laptop replacement wh
       hosts: { onInvalidate: () => () => {} },
       local: controller(async () => 'local'),
       userData: root,
+      version: '1.3.0',
       build,
       expose: (c) => {
         gateway = c;

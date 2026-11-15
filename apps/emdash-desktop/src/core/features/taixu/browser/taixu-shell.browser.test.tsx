@@ -84,6 +84,7 @@ const studio = {
   socketPath: '/tmp/example/desktop.sock',
   error: null,
   machines: [],
+  version: '1.3.0',
   build: '0123456789abcdef',
   uptimeSeconds: 7260,
 };
@@ -281,6 +282,7 @@ it('shows and refreshes subscription usage without loading the world or restarti
   expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('Status');
   await click('Usage');
   expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('Usage');
+  await expect.element(page.getByText('Taixu 1.3.0', { exact: true })).toBeVisible();
   expect(host.textContent).toContain('Codex Pro (studio@example.com)');
   expect(host.querySelector('[role="meter"]')?.getAttribute('aria-valuenow')).toBe('75');
   const usagePanel = host.querySelector<HTMLElement>('.taixu-server-usage')!;
@@ -339,12 +341,20 @@ it('shows real diagnostics, makes lost status unknown, and omits capability URLs
     expect(host.textContent).toContain('Running');
     expect(host.textContent).toContain('Enabled over SSH');
     expect(host.textContent).toContain('2h 1m');
+    expect(host.textContent).toContain('Taixu 1.3.0');
     await click('Copy diagnostics');
+    expect(writeText.mock.calls[0]![0]).toContain('Version: 1.3.0');
     expect(writeText.mock.calls[0]![0]).toContain(`Local endpoint: ${location.origin}`);
     expect(writeText.mock.calls[0]![0]).not.toContain('secret-capability');
     mocks.status.mockRejectedValueOnce(new Error('Disconnected'));
+    await click('Refresh status');
+    expect(host.textContent).toContain('Taixu 1.3.0');
+    expect(host.textContent).toContain('Backend status is unavailable.');
+    mocks.status.mockRejectedValueOnce(new Error('Disconnected'));
     mocks.studioStatus.mockRejectedValueOnce(new Error('Disconnected'));
     await click('Refresh status');
+    expect(host.textContent).not.toContain('Taixu 1.3.0');
+    expect(host.textContent).toContain('Version unavailable');
     expect(host.textContent).not.toContain('Running');
     expect(host.textContent).not.toContain('Enabled over SSH');
     expect(host.textContent).toContain('Unknown');
@@ -443,6 +453,7 @@ it('shows the same Apps panel in compact server mode and disables stopping occup
   await mount();
   await click('Apps');
   expect(host.querySelector('iframe')).toBeNull();
+  await expect.element(page.getByText('Taixu 1.3.0', { exact: true })).toBeVisible();
   const stop = [...host.querySelectorAll('button')].find((b) => b.textContent === 'Stop service')!;
   expect(stop.disabled).toBe(true);
   expect(host.querySelector('[aria-label="Bloom"] button')).toBeNull();

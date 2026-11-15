@@ -36,6 +36,7 @@ export async function createStudioService({
   hosts,
   local,
   userData,
+  version,
   build,
   expose,
   updates,
@@ -47,6 +48,7 @@ export async function createStudioService({
   hosts: Pick<Hosts, 'onInvalidate'>;
   local: Controller;
   userData: string;
+  version: string;
   build: string;
   expose: (controller: Controller) => () => Promise<void>;
 }) {
@@ -82,6 +84,7 @@ export async function createStudioService({
       connected: !!remote?.gateway && !remote.abort.signal.aborted,
       sharing: !!server,
       serverMode,
+      version,
       build,
       uptimeSeconds: Math.floor(process.uptime()),
       socketPath,
