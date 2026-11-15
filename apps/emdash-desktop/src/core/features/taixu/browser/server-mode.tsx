@@ -1,4 +1,6 @@
+import { Tabs } from '@emdash/ui/react/primitives';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { UsageOverviewPanel } from '@core/features/usage/contributions/overview-panel';
 import { getTaixuClient } from '../api/browser/client';
 import { getStudioClient } from '../api/browser/studio-client';
 import type { StudioStatus } from '../api/studio-contract';
@@ -85,84 +87,97 @@ export function ServerMode({
       <div className="taixu-server-heading">
         <span className="taixu-server-eyebrow">This Mac</span>
         <h1>Server mode</h1>
-        <p>The world is unloaded. Your Studio’s work stays here.</p>
       </div>
-      <dl className="taixu-server-status">
-        <div>
-          <dt>Backend</dt>
-          <dd data-state={running === true ? 'ready' : 'unknown'}>{backendLabel}</dd>
-        </div>
-        <div>
-          <dt>Laptop access</dt>
-          <dd>{sharingLabel}</dd>
-        </div>
-      </dl>
-      <label className="taixu-sharing">
-        <input
-          type="checkbox"
-          checked={studio?.sharing ?? false}
-          disabled={!studio || sharingBusy}
-          onChange={(event) => {
-            const enabled = event.target.checked;
-            setSharingBusy(true);
-            setActionError('');
-            void getStudioClient()
-              .then((client) => client.share({ enabled }))
-              .then(() => refresh())
-              .catch((cause) =>
-                setActionError(cause instanceof Error ? cause.message : 'Could not change sharing.')
-              )
-              .finally(() => setSharingBusy(false));
-          }}
-        />
-        Allow my laptop to connect
-      </label>
-      <dl className="taixu-server-details">
-        <div>
-          <dt>App uptime</dt>
-          <dd>{uptime}</dd>
-        </div>
-        <div>
-          <dt>Build</dt>
-          <dd title={studio?.build}>{studio?.build.slice(0, 12) || 'Unavailable'}</dd>
-        </div>
-        <div>
-          <dt>Local endpoint</dt>
-          <dd>{endpoint}</dd>
-        </div>
-        <div>
-          <dt>Last check</dt>
-          <dd>{checked ?? 'Checking…'}</dd>
-        </div>
-      </dl>
+      <Tabs.Root defaultValue="status" className="taixu-server-tabs">
+        <Tabs.List aria-label="Server information" className="taixu-server-tab-list">
+          <Tabs.Tab value="status">Status</Tabs.Tab>
+          <Tabs.Tab value="usage">Usage</Tabs.Tab>
+        </Tabs.List>
+        <Tabs.Panel value="status" className="taixu-server-status-panel">
+          <p>The world is unloaded. Your Studio’s work stays here.</p>
+          <dl className="taixu-server-status">
+            <div>
+              <dt>Backend</dt>
+              <dd data-state={running === true ? 'ready' : 'unknown'}>{backendLabel}</dd>
+            </div>
+            <div>
+              <dt>Laptop access</dt>
+              <dd>{sharingLabel}</dd>
+            </div>
+          </dl>
+          <label className="taixu-sharing">
+            <input
+              type="checkbox"
+              checked={studio?.sharing ?? false}
+              disabled={!studio || sharingBusy}
+              onChange={(event) => {
+                const enabled = event.target.checked;
+                setSharingBusy(true);
+                setActionError('');
+                void getStudioClient()
+                  .then((client) => client.share({ enabled }))
+                  .then(() => refresh())
+                  .catch((cause) =>
+                    setActionError(
+                      cause instanceof Error ? cause.message : 'Could not change sharing.'
+                    )
+                  )
+                  .finally(() => setSharingBusy(false));
+              }}
+            />
+            Allow my laptop to connect
+          </label>
+          <dl className="taixu-server-details">
+            <div>
+              <dt>App uptime</dt>
+              <dd>{uptime}</dd>
+            </div>
+            <div>
+              <dt>Build</dt>
+              <dd title={studio?.build}>{studio?.build.slice(0, 12) || 'Unavailable'}</dd>
+            </div>
+            <div>
+              <dt>Local endpoint</dt>
+              <dd>{endpoint}</dd>
+            </div>
+            <div>
+              <dt>Last check</dt>
+              <dd>{checked ?? 'Checking…'}</dd>
+            </div>
+          </dl>
+          <div className="taixu-server-tools">
+            <button disabled={checking || sharingBusy} onClick={() => void refresh()}>
+              Refresh status
+            </button>
+            <button
+              onClick={() => {
+                setCopied(false);
+                void navigator.clipboard
+                  .writeText(diagnostics)
+                  .then(() => setCopied(true))
+                  .catch(() => setActionError('Could not copy diagnostics.'));
+              }}
+            >
+              Copy diagnostics
+            </button>
+            {copied && <span role="status">Copied</span>}
+            {running !== true && (
+              <button disabled={busy} onClick={onReconnect}>
+                Retry backend
+              </button>
+            )}
+          </div>
+        </Tabs.Panel>
+        <Tabs.Panel value="usage" className="taixu-server-usage">
+          <UsageOverviewPanel />
+        </Tabs.Panel>
+      </Tabs.Root>
       {(error || checkError || actionError) && (
         <p className="taixu-server-error" role="alert">
           {[error, checkError, actionError].filter(Boolean).join(' ')}
         </p>
       )}
-      <div className="taixu-server-tools">
-        <button disabled={checking || sharingBusy} onClick={() => void refresh()}>
-          Refresh status
-        </button>
-        <button
-          onClick={() => {
-            setCopied(false);
-            void navigator.clipboard
-              .writeText(diagnostics)
-              .then(() => setCopied(true))
-              .catch(() => setActionError('Could not copy diagnostics.'));
-          }}
-        >
-          Copy diagnostics
-        </button>
-        {copied && <span role="status">Copied</span>}
-        {running !== true && (
-          <button disabled={busy} onClick={onReconnect}>
-            Retry backend
-          </button>
-        )}
-      </div>
-      <footer>
+      <footer className="taixu-server-footer">
         <p>Keep this Mac awake and Taixu running for laptop access.</p>
         <button className="taixu-server-open" disabled={busy} onClick={onOpenWorld}>
           Open Taixu

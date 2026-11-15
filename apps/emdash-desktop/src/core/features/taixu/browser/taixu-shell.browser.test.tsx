@@ -2,7 +2,9 @@ import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { page } from 'vitest/browser';
+import type { UsageOverview } from '@core/features/usage/api/schemas';
 import { TaixuShell } from './taixu-shell';
+import '@emdash/ui/style.css';
 
 const mocks = vi.hoisted(() => ({
   connect: vi.fn(),
@@ -13,6 +15,9 @@ const mocks = vi.hoisted(() => ({
   studioStatus: vi.fn(),
   setServerMode: vi.fn(),
   share: vi.fn(),
+  usageState: vi.fn(),
+  refreshUsage: vi.fn(),
+  retryUsage: vi.fn(),
 }));
 vi.mock('../api/browser/client', () => ({
   getTaixuClient: async () => ({
@@ -43,6 +48,15 @@ vi.mock('../api/browser/studio-client', () => ({
 vi.mock('./update-button', () => ({
   UpdateButton: () => <span data-testid="updates">Updates</span>,
 }));
+vi.mock('@core/primitives/wire/browser/use-remote-model-state', () => ({
+  useRemoteModelState: mocks.usageState,
+}));
+vi.mock('@core/features/usage/api/browser/client', () => ({
+  getUsageClient: async () => ({ refresh: mocks.refreshUsage }),
+}));
+vi.mock('@core/features/agents/contributions/browser/agent-icon', () => ({
+  AgentIcon: () => null,
+}));
 
 let host: HTMLDivElement;
 let root: Root;
@@ -70,7 +84,16 @@ beforeEach(() => {
   mocks.studioStatus.mockResolvedValue({ ...studio });
   mocks.setServerMode.mockResolvedValue(undefined);
   mocks.share.mockResolvedValue({ ...studio });
+  mocks.usageState.mockReturnValue({
+    value: { accounts: [], machines: [] },
+    isLoading: false,
+    error: undefined,
+    refresh: mocks.retryUsage,
+  });
+  mocks.refreshUsage.mockResolvedValue(undefined);
+  mocks.retryUsage.mockResolvedValue(undefined);
   host = document.createElement('div');
+  host.className = 'emdark';
   document.body.append(host);
   root = createRoot(host);
 });
@@ -209,6 +232,84 @@ it('leaves the world mounted when saving server mode fails', async () => {
   expect(host.querySelector('iframe')).toBe(previousFrame);
 });
 
+it('shows and refreshes subscription usage without loading the world or restarting the backend', async () => {
+  await page.viewport(520, 620);
+  document.body.style.margin = '0';
+  mocks.studioStatus.mockResolvedValue({ ...studio, serverMode: true });
+  const overview: UsageOverview = {
+    machines: [],
+    accounts: [
+      {
+        key: 'example-codex',
+        providerId: 'codex',
+        account: { plan: 'ChatGPT Pro', email: 'studio@example.com' },
+        sources: [],
+        windows: [
+          {
+            id: 'five_hour',
+            label: '5-hour',
+            usedPercent: 25,
+            resetsAt: Date.now() + 3_600_000,
+            observedAt: Date.now(),
+            sourceName: 'Example Studio',
+            stale: false,
+          },
+        ],
+      },
+    ],
+  };
+  mocks.usageState.mockReturnValue({ value: overview, isLoading: false });
+  await mount();
+  expect(mocks.usageState).not.toHaveBeenCalled();
+  expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('Status');
+  await click('Usage');
+  expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('Usage');
+  expect(host.textContent).toContain('Codex Pro (studio@example.com)');
+  expect(host.querySelector('[role="meter"]')?.getAttribute('aria-valuenow')).toBe('75');
+  const usagePanel = host.querySelector<HTMLElement>('.taixu-server-usage')!;
+  expect(usagePanel.scrollWidth).toBeLessThanOrEqual(usagePanel.clientWidth);
+  if (import.meta.env.VITE_TAIXU_USAGE_SCREENSHOT) {
+    await page.screenshot({ path: import.meta.env.VITE_TAIXU_USAGE_SCREENSHOT });
+  }
+  await act(async () =>
+    host.querySelector<HTMLButtonElement>('[aria-label="Refresh usage"]')!.click()
+  );
+  expect(mocks.refreshUsage).toHaveBeenCalledExactlyOnceWith(undefined, { timeoutMs: 45_000 });
+  expect(host.querySelector('iframe')).toBeNull();
+  expect(mocks.connect).toHaveBeenCalledTimes(1);
+  expect(mocks.setServerMode).not.toHaveBeenCalled();
+  expect(mocks.share).not.toHaveBeenCalled();
+  await click('Status');
+  expect(host.textContent).toContain('Running');
+  await expect.poll(() => host.querySelector('[role="meter"]')).toBeNull();
+  await click('Usage');
+  await click('Open Taixu');
+  expect(mocks.setServerMode).toHaveBeenCalledExactlyOnceWith({ enabled: false });
+  expect(host.querySelector('iframe')).not.toBeNull();
+  expect(mocks.connect).toHaveBeenCalledTimes(1);
+});
+
+it('keeps usage failures visible and allows retry from server mode', async () => {
+  mocks.studioStatus.mockResolvedValue({ ...studio, serverMode: true });
+  mocks.usageState.mockReturnValue({
+    value: undefined,
+    isLoading: false,
+    error: new Error('Disconnected'),
+    refresh: mocks.retryUsage,
+  });
+  mocks.refreshUsage.mockRejectedValueOnce(new Error('Still disconnected'));
+  await mount();
+  await click('Usage');
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain('Could not load usage.');
+  expect(host.querySelector('[role="meter"]')).toBeNull();
+  await act(async () =>
+    host.querySelector<HTMLButtonElement>('[aria-label="Refresh usage"]')!.click()
+  );
+  expect(mocks.retryUsage).toHaveBeenCalledOnce();
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain('Could not refresh usage.');
+  expect(host.querySelector('iframe')).toBeNull();
+});
+
 it('shows real diagnostics, makes lost status unknown, and omits capability URLs from copies', async () => {
   mocks.studioStatus.mockResolvedValue({ ...studio, serverMode: true });
   mocks.connect.mockResolvedValue({
@@ -250,4 +351,10 @@ it('fits server mode in its compact window', async () => {
   if (import.meta.env.VITE_TAIXU_SCREENSHOT) {
     await page.screenshot({ path: import.meta.env.VITE_TAIXU_SCREENSHOT });
   }
+  await click('Usage');
+  await page.viewport(440, 500);
+  expect(main.scrollWidth).toBeLessThanOrEqual(main.clientWidth);
+  expect(open.getBoundingClientRect().bottom).toBeLessThanOrEqual(500);
+  expect(host.querySelector('iframe')).toBeNull();
+  await page.viewport(1280, 720);
 });
