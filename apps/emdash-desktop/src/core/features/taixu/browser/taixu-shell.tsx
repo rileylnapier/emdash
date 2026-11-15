@@ -189,7 +189,14 @@ export function TaixuShell({
         void getTaixuClient()
           .then((client) =>
             data.action === 'archive-work'
-              ? openModal('taixuArchiveModal', { ...target, client })
+              ? openModal('taixuArchiveModal', {
+                  ...target,
+                  client,
+                  initialContext:
+                    'context' in data && typeof data.context === 'string'
+                      ? data.context.slice(0, 24000)
+                      : '',
+                })
               : openModal('taixuMergeModal', { ...target, client })
           )
           .catch(() => setError('Could not open the work action. Reconnect and try again.'));
@@ -323,6 +330,15 @@ export function TaixuShell({
                 }}
               >
                 Usage
+              </button>
+              <button
+                onClick={() =>
+                  void getTaixuClient()
+                    .then((client) => openModal('taixuArchiveListModal', { client }))
+                    .catch(() => setError('Could not open the work archive. Try again.'))
+                }
+              >
+                Work archive
               </button>
               <button onClick={() => inspect(!inspecting)}>
                 {inspecting ? 'Back to Taixu' : 'Inspect work'}

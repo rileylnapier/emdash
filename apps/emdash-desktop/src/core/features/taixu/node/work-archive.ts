@@ -8,6 +8,7 @@ import type { TaskService } from '@core/features/tasks/api/node/task-service';
 import type { WorkspaceIdentityService } from '@core/features/workspaces/api/node/workspace-identity-service';
 import type { Conversation } from '@core/primitives/conversations/api';
 import type { WorkArchiveInput, WorkTarget } from '../api/contract';
+import { createWorkArchiveStore, type WorkArchiveStore } from './work-archive-store';
 
 export type ArchiveWork = ReturnType<typeof createWorkArchive>;
 
@@ -18,6 +19,7 @@ export function createWorkArchive({
   readConversations,
   archive,
   restore,
+  notes = createWorkArchiveStore(),
 }: {
   taskService: Pick<TaskService, 'getTasks'>;
   workspaceIdentity: Pick<WorkspaceIdentityService, 'resolve'>;
@@ -25,18 +27,18 @@ export function createWorkArchive({
   readConversations: () => Promise<Conversation[]>;
   archive: (target: WorkTarget) => Promise<void>;
   restore: (taskId: string) => Promise<void>;
+  notes?: WorkArchiveStore;
 }) {
   const pending = new Set<string>();
   return Object.assign(
-    async (input: WorkArchiveInput, assertMerged: () => Promise<void>) => {
+    async (input: WorkArchiveInput) => {
       if (pending.has(input.taskId)) throw new Error('This work is already being archived.');
       pending.add(input.taskId);
       try {
         const tasks = await taskService.getTasks(input.projectId);
         const task = tasks.find((t) => t.id === input.taskId);
         if (!task?.workspaceId) throw new Error('This work has no available workspace.');
-        // An archived task can retry cleanup without reopening or reaping sessions again.
-        if (!task.archivedAt) await assertMerged();
+        const saved = await notes.read(input);
         const identity = await workspaceIdentity.resolve(task.workspaceId);
         if (!identity || identity.projectId !== input.projectId)
           throw new Error('Work belongs to a different project.');
@@ -66,7 +68,11 @@ export function createWorkArchive({
             client.tuiAgents.agentStates.state(undefined, 'list').snapshot(),
           ]);
           const record = records.data[task.workspaceId!];
-          if (!record || record.kind !== 'worktree' || record.observedStatus === 'missing')
+          if (
+            !record ||
+            record.kind !== 'worktree' ||
+            (record.observedStatus === 'missing' && !task.archivedAt)
+          )
             throw new Error('Only an available task worktree can be finished here.');
           if (record.git?.dirty)
             throw new Error(
@@ -108,6 +114,7 @@ export function createWorkArchive({
             if (
               s.status !== 'running' ||
               a?.source !== 'hook' ||
+              a.conversationId !== s.conversationId ||
               !['idle', 'completed'].includes(a.status) ||
               a.notificationType ||
               a.updatedAt < s.startedAt ||
@@ -119,55 +126,91 @@ export function createWorkArchive({
           }
         };
         await assertIdle();
-        // Fresh host-side Git inspection, including nested repositories, before any
-        // idle session is closed. Unknown/older hosts fail closed, never use git clean.
-        const checked = await client.workspaceRegistry.cleanDependencies({
-          workspaceId: task.workspaceId,
-          checkOnly: true,
-        });
-        if (!checked.success)
-          throw new Error(
-            `${task.name}: ${'message' in checked.error ? checked.error.message : checked.error.type}`
-          );
+        const records = await client.workspaceRegistry.records.state(undefined, 'list').snapshot();
+        const missing = records.data[task.workspaceId]?.observedStatus === 'missing';
+        if (!missing) {
+          // Preflight fresh Git state before closing sessions; unknown hosts fail closed.
+          const checked = await client.workspaceRegistry.cleanDependencies({
+            workspaceId: task.workspaceId,
+            checkOnly: true,
+          });
+          if (!checked.success)
+            throw new Error(
+              'message' in checked.error ? checked.error.message : checked.error.type
+            );
+        }
+        const git = records.data[task.workspaceId]?.git;
+        let note = saved ?? {
+          taskId: task.id,
+          projectId: input.projectId,
+          name: task.name,
+          context: input.context ?? task.name,
+          workspacePath: identity.path,
+          branch: git?.branch ?? null,
+          commit: git?.headOid ?? null,
+          urls: (task.prs ?? []).map((pr) => pr.url),
+          savedAt: new Date().toISOString(),
+          archived: false,
+          cleaned: false,
+          message: 'Context saved; archive not yet confirmed.',
+        };
+        // A durable note is required before ending a session or removing any files.
+        note = {
+          ...note,
+          context: input.context ?? note.context,
+          // A retained checkout may have changed since the first cleanup attempt.
+          // Preserve the saved references only when removal already succeeded.
+          ...(!missing && {
+            name: task.name,
+            workspacePath: identity.path,
+            branch: git?.branch ?? note.branch,
+            commit: git?.headOid ?? note.commit,
+            urls: (task.prs ?? []).map((pr) => pr.url),
+          }),
+        };
+        await notes.save(note);
         await assertIdle();
         if (!task.archivedAt) await archive(input);
+        const finish = async (cleaned: boolean, message: string) => {
+          await notes.save({ ...note, archived: true, cleaned, message });
+          return { archived: true, cleaned, message };
+        };
         try {
           // The host checks live sessions again under its workspace claim; failure to
           // close an idle agent must never be reported as successful cleanup.
-          const cleaned = await client.workspaceRegistry.cleanDependencies({
+          if (!missing) {
+            const cleaned = await client.workspaceRegistry.cleanDependencies({
+              workspaceId: task.workspaceId,
+            });
+            if (!cleaned.success)
+              throw new Error(
+                'message' in cleaned.error ? cleaned.error.message : cleaned.error.type
+              );
+          }
+          const retired = await client.workspaceRegistry.retireCheckout({
             workspaceId: task.workspaceId,
           });
-          if (!cleaned.success)
+          if (!retired.success)
             throw new Error(
-              'message' in cleaned.error
-                ? cleaned.error.message
-                : cleaned.error.type === 'workspace-active'
-                  ? 'Sessions or scripts are still present on the computer owning this work.'
-                  : cleaned.error.type
+              'message' in retired.error ? retired.error.message : retired.error.type
             );
-          if (cleaned.data.retained.length)
-            return {
-              archived: true,
-              cleaned: false,
-              message: `${task.name}: archived; removed ${cleaned.data.removed.length} dependency folders. Kept for review: ${cleaned.data.retained.slice(0, 5).join('; ')}. History and source files are kept.`,
-            };
-          return {
-            archived: true,
-            cleaned: true,
-            message: `${task.name}: archived; dependency cleanup complete. Chat, reports, images, PR link, source checkout and branch are kept. Restore work to resume; dependencies can be reinstalled by project setup.`,
-          };
         } catch (error) {
-          return {
-            archived: true,
-            cleaned: false,
-            message: `${task.name}: archived; cleanup needs attention on the computer owning this work: ${error instanceof Error ? error.message : String(error)} Retry cleanup here. History and source files are kept.`,
-          };
+          return finish(
+            false,
+            `${task.name}: archived; checkout kept at ${identity.path}. ${error instanceof Error ? error.message : String(error)} Retry cleanup when resolved. Saved context and branch are kept.`
+          );
         }
+        return finish(
+          true,
+          `${task.name}: archived; checkout removed. Saved context and Git branch are kept. Start new work if you need to revisit it.`
+        );
       } finally {
         pending.delete(input.taskId);
       }
     },
     {
+      list: (offset: number) => notes.list(offset),
+      read: (input: WorkTarget) => notes.read(input),
       restore: async (input: WorkTarget) => {
         if (pending.has(input.taskId))
           throw new Error('Wait for cleanup to finish before restoring this work.');

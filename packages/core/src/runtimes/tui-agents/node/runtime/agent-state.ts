@@ -94,7 +94,7 @@ export class TuiAgentStates {
     }
 
     const status =
-      event.notificationType && ATTENTION_NOTIFICATION_TYPES.has(event.notificationType)
+      !event.notificationType || ATTENTION_NOTIFICATION_TYPES.has(event.notificationType)
         ? 'awaiting-input'
         : 'idle';
     this.setStatus(conversationId, {
@@ -209,7 +209,10 @@ export class TuiAgentStates {
         previous.notificationType === next.notificationType &&
         previous.title === next.title &&
         previous.message === next.message &&
-        previous.lastAssistantMessage === next.lastAssistantMessage
+        previous.lastAssistantMessage === next.lastAssistantMessage &&
+        // Repeated hooks are new activity evidence. Keep their timestamp even
+        // when the state is unchanged; the desktop deduplicates notifications.
+        (patch.source !== 'hook' || previous.updatedAt === next.updatedAt)
       ) {
         return;
       }

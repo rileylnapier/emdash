@@ -9,7 +9,7 @@ import {
 } from '#runtimes/tui-agents/node/state/live-models';
 import { TuiAgentStates } from './agent-state';
 
-function createTracker() {
+function createTracker(now = () => 1_000) {
   const sessionsLiveModel = createTuiSessionsLiveModel();
   const agentStatesLiveModel = createTuiAgentStatesLiveModel();
   const sessions = createTuiSessionsListModel(sessionsLiveModel);
@@ -19,7 +19,7 @@ function createTracker() {
   const tracker = new TuiAgentStates(
     sessions,
     agentStates,
-    () => 1_000,
+    now,
     onSessionIdChanged,
     onAgentStateChanged
   );
@@ -60,6 +60,76 @@ describe('TuiAgentStates', () => {
       '\r'
     );
     expect(peek(agentStates.states.list)['conv-2']).toBeUndefined();
+  });
+
+  it.each(['permission_prompt', 'elicitation_dialog', undefined] as const)(
+    'requires attention for %s notifications, including unknown types',
+    (notificationType) => {
+      const { tracker } = createTracker();
+      tracker.applyCanonicalEvent('conv-1', 'claude', { kind: 'status', type: 'stop' });
+      tracker.applyCanonicalEvent('conv-1', 'claude', {
+        kind: 'status',
+        type: 'notification',
+        notificationType,
+      });
+      expect(tracker.current('conv-1')).toMatchObject({ status: 'awaiting-input' });
+    }
+  );
+
+  it('refreshes repeated completion evidence after newer input', () => {
+    let now = 100;
+    const { tracker, sessions, onAgentStateChanged } = createTracker(() => now);
+    produceCell(sessions.states.list, (draft) => {
+      draft['conv-1'] = {
+        conversationId: 'conv-1',
+        providerId: 'claude',
+        sessionId: 'conv-1',
+        status: 'running',
+        cols: 120,
+        rows: 30,
+        resume: null,
+        startedAt: 1,
+        lastInputAt: 1,
+      };
+    });
+    const stopped = { kind: 'status', type: 'stop' } as const;
+    tracker.applyCanonicalEvent('conv-1', 'claude', stopped);
+
+    now = 200;
+    produceCell(sessions.states.list, (draft) => {
+      draft['conv-1'].lastInputAt = now;
+    });
+    tracker.markInputSubmitted(
+      'conv-1',
+      { hooks: { kind: 'config', scope: 'global', supportedEvents: ['start', 'stop'] } },
+      '\r'
+    );
+    // Input alone cannot freshen the provider's old completion signal.
+    expect(tracker.current('conv-1')?.updatedAt).toBe(100);
+
+    now = 300;
+    tracker.applyCanonicalEvent('conv-1', 'claude', stopped);
+    expect(tracker.current('conv-1')).toMatchObject({
+      status: 'completed',
+      source: 'hook',
+      updatedAt: 300,
+    });
+    expect(onAgentStateChanged).toHaveBeenLastCalledWith(
+      'conv-1',
+      expect.objectContaining({ updatedAt: 300 })
+    );
+  });
+
+  it('does not freshen restored hook evidence', () => {
+    const { tracker } = createTracker();
+    tracker.restore({
+      conversationId: 'conv-1',
+      providerId: 'claude',
+      status: 'completed',
+      source: 'hook',
+      updatedAt: 1,
+    });
+    expect(tracker.current('conv-1')?.updatedAt).toBe(1);
   });
 
   it('keeps Enter→working when start hooks are declared but not active', () => {

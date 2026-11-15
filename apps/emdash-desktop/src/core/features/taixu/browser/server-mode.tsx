@@ -74,6 +74,7 @@ export function ServerMode({
   const endpoint = url ? new URL(url).origin : 'Unavailable';
   const diagnostics = [
     'Taixu · Server mode · This Mac',
+    `Version: ${studio?.version || 'Unavailable'}`,
     `Backend: ${backendLabel}`,
     `Laptop access: ${sharingLabel}`,
     `App uptime: ${uptime}`,
@@ -86,7 +87,12 @@ export function ServerMode({
   return (
     <main className="taixu-server" aria-label="Server mode">
       <div className="taixu-server-heading">
-        <span className="taixu-server-eyebrow">This Mac</span>
+        <div className="taixu-server-identity">
+          <span className="taixu-server-eyebrow">This Mac</span>
+          <span className="taixu-server-version" title="Taixu running on this Mac">
+            {studio?.version ? `Taixu ${studio.version}` : 'Version unavailable'}
+          </span>
+        </div>
         <h1>Server mode</h1>
       </div>
       <Tabs.Root defaultValue="status" className="taixu-server-tabs">

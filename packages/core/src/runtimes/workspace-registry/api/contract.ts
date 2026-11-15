@@ -250,6 +250,14 @@ export const workspaceRegistryContract = defineContract({
     callTimeoutMs: 0,
   }),
 
+  /** Remove a clean, idle linked checkout while retaining its branch and registry. */
+  retireCheckout: fallible({
+    input: z.object({ workspaceId: z.string().min(1) }),
+    data: z.void(),
+    error: cleanArtifactsErrorSchema,
+    callTimeoutMs: 0,
+  }),
+
   /**
    * Archive cleanup: remove only ignored node_modules for tracked, locked packages.
    * Keeps checkout, branches, history and other ignored data. Refuses live sessions

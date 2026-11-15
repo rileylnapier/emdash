@@ -10,6 +10,7 @@ export const studioStatusSchema = z.object({
   connected: z.boolean(),
   sharing: z.boolean(),
   serverMode: z.boolean(),
+  version: z.string().min(1),
   build: z.string(),
   uptimeSeconds: z.number(),
   socketPath: z.string(),

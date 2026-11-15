@@ -755,33 +755,40 @@ export function createTaixuWireController({
       return connecting;
     },
     status: () => ({ running: !!child && !!url }),
+    readArchive: (input) => archiveWork?.read(input) ?? Promise.resolve(null),
+    listArchives: ({ offset }) =>
+      archiveWork?.list(offset) ?? Promise.resolve({ notes: [], nextOffset: null }),
     archiveWork: async (input) => {
-      const merger = requireMerge(input);
+      if (updateHeld) throw new Error('Wait for the Taixu update before archiving.');
+      if (
+        !(await taskService.getTasks(input.projectId)).some(
+          (task) => task.id === input.taskId && task.projectId === input.projectId
+        )
+      )
+        throw new Error('This work is not in the selected project.');
+      const linked = targets.get(input.taskId) === input.projectId;
+      const receipt = (value: Parameters<typeof recordArchive>[0]) =>
+        linked ? recordArchive(value) : Promise.resolve();
       if (!archiveWork) throw new Error('Archiving is unavailable.');
       activeSubmissions++;
       try {
-        await recordArchive({
+        await receipt({
           ...input,
           status: 'pending',
           message: 'Checking archive and cleanup readiness.',
         });
         let result;
         try {
-          result = await archiveWork(input, async () => {
-            const observation = await merger.observe(input);
-            child?.postMessage({ type: 'work-observation', input: observation });
-            if (observation.status !== 'merged')
-              throw new Error('This work’s PR must be merged before finishing it.');
-          });
+          result = await archiveWork(input);
         } catch (error) {
-          await recordArchive({
+          await receipt({
             ...input,
             status: 'blocked',
             message: error instanceof Error ? error.message : String(error),
           });
           throw error;
         }
-        await recordArchive({ ...input, ...result, status: 'archived' });
+        await receipt({ ...input, ...result, status: 'archived' });
         return result;
       } finally {
         activeSubmissions--;

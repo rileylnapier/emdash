@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => {
   };
   return {
     task,
+    review: vi.fn().mockResolvedValue(undefined),
     manager: {
       tasks: new Map([[task.data.id, task]]),
       archiveTask: vi.fn().mockResolvedValue(undefined),
@@ -31,6 +32,9 @@ const mocks = vi.hoisted(() => {
   };
 });
 
+vi.mock('@core/features/taixu/api/browser/review-work-archive', () => ({
+  reviewWorkArchives: mocks.review,
+}));
 vi.mock('@core/features/tasks/api/browser/task-state/task-selectors', () => ({
   getTaskStore: () => mocks.task,
   getRegisteredTaskData: () => mocks.task.data,
@@ -134,7 +138,7 @@ vi.mock('@core/features/projects/browser/components/task-view/task-list-model', 
 describe('archive UI availability for provisioned tasks on an unreachable host', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('enables and executes the task archive command', () => {
+  it('opens the reviewed archive dialog from the task command', () => {
     renderToStaticMarkup(
       // oxlint-disable-next-line react/no-children-prop -- the node test project is .ts-only; createElement needs TaskScope's required children prop.
       createElement(TaskScope, { projectId: 'project-1', taskId: 'task-1', children: null })
@@ -145,7 +149,8 @@ describe('archive UI availability for provisioned tasks on an unreachable host',
     const command = implementation['task.archive']({ projectId: 'project-1', taskId: 'task-1' });
     expect(command.availability?.()).toEqual({ kind: 'enabled' });
     command.execute(undefined, 'keybinding');
-    expect(mocks.manager.archiveTask).toHaveBeenCalledWith('task-1');
+    expect(mocks.review).toHaveBeenCalledWith([{ taskId: 'task-1', projectId: 'project-1' }]);
+    expect(mocks.manager.archiveTask).not.toHaveBeenCalled();
   });
 
   it.each(['sidebar', 'project row'])('enables archive in the %s context menu', (surface) => {
@@ -165,17 +170,19 @@ describe('archive UI availability for provisioned tasks on an unreachable host',
     const props = mocks.menu.mock.calls[0]![0];
     expect(props.archiveDisabledReason).toBeUndefined();
     props.onArchive();
-    expect(mocks.manager.archiveTask).toHaveBeenCalledWith('task-1');
+    expect(mocks.review).toHaveBeenCalledWith([{ taskId: 'task-1', projectId: 'project-1' }]);
+    expect(mocks.manager.archiveTask).not.toHaveBeenCalled();
   });
 
-  it('enables bulk archive with a provisioned task selected', () => {
+  it('reviews bulk archive and keeps selection until the outcome is known', () => {
     renderToStaticMarkup(createElement(TaskList));
     const buttons = mocks.button.mock.calls.map(([props]) => props);
     const archive = buttons.find((props) => props['aria-label']?.startsWith('Archive'));
     expect(archive).toBeDefined();
     expect(archive?.disabled).not.toBe(true);
     archive?.onClick();
-    expect(mocks.manager.archiveTask).toHaveBeenCalledWith('task-1');
-    expect(mocks.taskView.clear).toHaveBeenCalledOnce();
+    expect(mocks.review).toHaveBeenCalledWith([{ taskId: 'task-1', projectId: 'project-1' }]);
+    expect(mocks.manager.archiveTask).not.toHaveBeenCalled();
+    expect(mocks.taskView.clear).not.toHaveBeenCalled();
   });
 });

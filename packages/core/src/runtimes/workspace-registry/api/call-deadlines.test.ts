@@ -21,6 +21,7 @@ const longRunningVerbs = {
   retryStep: { workspaceId: 'ws-task', step: 'push-branch' },
   measureUsage: { workspaceId: 'ws-task' },
   cleanArtifacts: { workspaceId: 'ws-task' },
+  retireCheckout: { workspaceId: 'ws-task' },
 } as const;
 
 type LongRunningVerb = keyof typeof longRunningVerbs;
@@ -35,6 +36,7 @@ const longRunningContract = defineContract({
   retryStep: registry.retryStep,
   measureUsage: registry.measureUsage,
   cleanArtifacts: registry.cleanArtifacts,
+  retireCheckout: registry.retireCheckout,
 });
 
 /** A host whose verbs are still working — `git worktree add`, prepare, teardown. */
@@ -54,6 +56,7 @@ function busyHost() {
     retryStep: working,
     measureUsage: working,
     cleanArtifacts: working,
+    retireCheckout: working,
   });
   return { wire, started };
 }

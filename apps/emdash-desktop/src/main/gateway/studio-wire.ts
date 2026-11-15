@@ -60,6 +60,7 @@ export async function configureStudioWire(
     updates: createUpdateHost(app.getPath('userData'), build, assertIdleForTaixuUpdate),
     ssh,
     hosts,
+    version: app.getVersion(),
     build,
     userData: app.getPath('userData'),
     expose: (remote) =>

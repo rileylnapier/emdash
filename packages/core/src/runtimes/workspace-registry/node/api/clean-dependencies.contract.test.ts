@@ -299,4 +299,71 @@ describe('workspace registry cleanDependencies', () => {
       error: { type: 'workspace-not-found' },
     });
   }, 20000);
+  it('retires a clean checkout but preserves unpublished commits, its branch and registry record', async () => {
+    const repo = await registerRepository();
+    const checkout = await createWorktree('finished');
+    await write(path.join(checkout, 'tracked.txt'), 'unpublished change');
+    git(checkout, 'add', '.');
+    git(checkout, 'commit', '-m', 'unpublished work');
+    const commit = git(checkout, 'rev-parse', 'HEAD');
+    await write(path.join(checkout, 'node_modules/example/index.js'), 'dependency');
+    expect((await wire.client.cleanDependencies({ workspaceId: 'wt-finished' })).success).toBe(
+      true
+    );
+    expect(await wire.client.retireCheckout({ workspaceId: 'wt-finished' })).toMatchObject({
+      success: true,
+    });
+    expect(await exists(checkout)).toBe(false);
+    expect(git(repo, 'rev-parse', 'finished')).toBe(commit);
+    expect(git(repo, 'show', 'finished:tracked.txt')).toBe('unpublished change');
+    expect(
+      (await wire.client.records.state(undefined, 'list').snapshot()).data['wt-finished']
+    ).toBeDefined();
+    expect(await wire.client.retireCheckout({ workspaceId: 'wt-finished' })).toMatchObject({
+      success: true,
+    });
+  });
+
+  it.each(['.env', 'output.db', 'dist/generated-video.mp4', '.context/handoff.md', 'draft.txt'])(
+    'keeps unique local data %s and the checkout',
+    async (file) => {
+      await registerRepository();
+      const checkout = await createWorktree('local-data');
+      await write(path.join(checkout, file), 'only copy');
+      expect((await wire.client.retireCheckout({ workspaceId: 'wt-local-data' })).success).toBe(
+        false
+      );
+      expect(await fs.readFile(path.join(checkout, file), 'utf8')).toBe('only copy');
+    }
+  );
+  it('refuses changed tracked files, detached heads, active sessions and locked checkouts', async () => {
+    await registerRepository();
+    const checkout = await createWorktree('protected');
+    await write(path.join(checkout, 'tracked.txt'), 'unsaved work');
+    expect((await wire.client.retireCheckout({ workspaceId: 'wt-protected' })).success).toBe(false);
+    git(checkout, 'restore', 'tracked.txt');
+    git(checkout, 'checkout', '--detach');
+    expect((await wire.client.retireCheckout({ workspaceId: 'wt-protected' })).success).toBe(false);
+    git(checkout, 'checkout', 'protected');
+    liveSessions.set(checkout, 1);
+    expect((await wire.client.retireCheckout({ workspaceId: 'wt-protected' })).success).toBe(false);
+    liveSessions.clear();
+    git(path.join(root, 'repo'), 'worktree', 'lock', checkout);
+    expect((await wire.client.retireCheckout({ workspaceId: 'wt-protected' })).success).toBe(false);
+    expect(await exists(checkout)).toBe(true);
+    expect((await wire.client.retireCheckout({ workspaceId: 'ws-repo' })).success).toBe(false);
+  });
+  it('refuses hidden modifications excluded from Git status', async () => {
+    await registerRepository();
+    const checkout = await createWorktree('hidden-change');
+    git(checkout, 'update-index', '--assume-unchanged', 'tracked.txt');
+    await write(path.join(checkout, 'tracked.txt'), 'hidden unique content');
+    expect(git(checkout, 'status', '--porcelain')).toBe('');
+    expect((await wire.client.retireCheckout({ workspaceId: 'wt-hidden-change' })).success).toBe(
+      false
+    );
+    expect(await fs.readFile(path.join(checkout, 'tracked.txt'), 'utf8')).toBe(
+      'hidden unique content'
+    );
+  });
 });

@@ -1,13 +1,14 @@
 import { ListPopoverCard } from '@emdash/ui/react/components';
 import { CollectionToolbar, CollectionView, SortSelect } from '@emdash/ui/react/patterns';
 import { Button, ToggleGroup } from '@emdash/ui/react/primitives';
-import { Archive, RotateCcw, Trash2, X } from 'lucide-react';
+import { Archive, Trash2, X } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { useLayoutEffect, useState } from 'react';
 import { getProjectViewStore } from '@core/features/projects/api/browser/stores/project-selectors';
 import type { TaskViewStore } from '@core/features/projects/browser/stores/project-view';
 import { projectAvailabilityUiContribution as projectAvailabilityUi } from '@core/features/projects/contributions/browser/project-availability-ui';
 import { projectViewDef } from '@core/features/projects/contributions/views';
+import { reviewWorkArchives } from '@core/features/taixu/api/browser/review-work-archive';
 import { deleteSelectedTasks } from '@core/features/tasks/api/browser/delete-selected-tasks';
 import type { TaskManagerStore } from '@core/features/tasks/api/browser/stores/task-manager';
 import {
@@ -132,45 +133,37 @@ const TasksToolbar = observer(function TasksToolbar({
 
 const TasksSelectionBar = observer(function TasksSelectionBar({
   taskView,
-  taskManager,
   projectId,
 }: {
   taskView: TaskViewStore;
-  taskManager: TaskManagerStore;
   projectId: string;
 }) {
+  const [reviewing, setReviewing] = useState(false);
   if (taskView.count === 0) return null;
 
-  const bulkApply = (apply: (id: string) => void) => {
-    [...taskView.selectedIds].forEach(apply);
-    taskView.clear();
+  const reviewSelected = async () => {
+    setReviewing(true);
+    try {
+      await reviewWorkArchives([...taskView.selectedIds].map((taskId) => ({ taskId, projectId })));
+    } finally {
+      setReviewing(false);
+    }
   };
 
   return (
     <ListPopoverCard className="justify-between">
       <span className="whitespace-nowrap text-foreground-muted">{taskView.count} selected</span>
       <div className="flex items-center gap-2">
-        {taskView.tab === 'active' && (
-          <Button
-            variant="secondary"
-            size="sm"
-            aria-label="Archive"
-            onClick={() => bulkApply((id) => void taskManager.archiveTask(id))}
-          >
-            <Archive className="size-3.5" />
-            Archive
-          </Button>
-        )}
-        {taskView.tab === 'archived' && (
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => bulkApply((id) => void taskManager.restoreTask(id))}
-          >
-            <RotateCcw className="size-3.5" />
-            Restore
-          </Button>
-        )}
+        <Button
+          variant="secondary"
+          size="sm"
+          aria-label={taskView.tab === 'active' ? 'Archive' : 'Saved context'}
+          disabled={reviewing}
+          onClick={() => void reviewSelected()}
+        >
+          <Archive className="size-3.5" />
+          {taskView.tab === 'active' ? 'Archive' : 'Saved context'}
+        </Button>
         <Button variant="destructive" size="sm" onClick={() => void deleteSelectedTasks(projectId)}>
           <Trash2 className="size-3.5" />
           Delete <BoundShortcut command="task.deleteSelected" variant="keycaps" />
@@ -226,11 +219,12 @@ const TaskListContent = observer(function TaskListContent({
             projectId={projectId}
           />
         }
-        footer={
-          <TasksSelectionBar taskView={taskView} taskManager={taskManager} projectId={projectId} />
-        }
+        footer={<TasksSelectionBar taskView={taskView} projectId={projectId} />}
         onItemClick={(task) => {
-          if (task.data.archivedAt) return;
+          if (task.data.archivedAt) {
+            void reviewWorkArchives([{ taskId: task.data.id, projectId }]);
+            return;
+          }
           navigate(taskViewDef({ projectId, taskId: task.data.id }));
         }}
         emptySlot={
