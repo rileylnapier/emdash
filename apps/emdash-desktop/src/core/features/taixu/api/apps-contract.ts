@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export const appActionSchema = z.object({
-  appId: z.enum(['flow', 'bloom', 'taste', 'jam']),
+  appId: z.enum(['flow', 'bloom', 'taste', 'jam', 'wondercraft']),
   action: z.enum(['start', 'open', 'stop']),
 });
 export type AppAction = z.infer<typeof appActionSchema>;
@@ -9,7 +9,7 @@ export const appsStatusSchema = z.object({
   computer: z.string(),
   apps: z.array(
     z.object({
-      id: z.enum(['flow', 'bloom', 'taste', 'jam']),
+      id: z.enum(['flow', 'bloom', 'taste', 'jam', 'wondercraft']),
       name: z.string(),
       detail: z.string(),
       supported: z.boolean(),
