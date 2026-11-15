@@ -1,6 +1,11 @@
 import path from 'node:path';
 import { client, type Connection } from '@emdash/wire/rpc';
-import { maintenanceContract, releaseSchema, type TaixuUpdateState } from '../api/update-contract';
+import {
+  maintenanceContract,
+  releaseSchema,
+  type TaixuRelease,
+  type TaixuUpdateState,
+} from '../api/update-contract';
 import { downloadRelease, readRelease } from './update-files';
 import { getUpdateHold } from './update-guard';
 import type { createUpdateHost } from './update-host';
@@ -8,6 +13,15 @@ import type { createUpdateHost } from './update-host';
 export type UpdatePeer = { connection: Connection; close(): void };
 const message = (e: unknown) =>
   e instanceof Error ? e.message.slice(0, 600) : 'Could not update Taixu.';
+class ReleaseChangedError extends Error {
+  constructor(latest: TaixuRelease | null) {
+    super(
+      latest
+        ? `The release changed${latest.version ? ` to Taixu ${latest.version}` : ''}. Check for updates to download and review it before restarting.`
+        : 'The selected release is no longer shared. Check for updates when a release is available.'
+    );
+  }
+}
 export function createUpdateCoordinator({
   host,
   source,
@@ -50,6 +64,8 @@ export function createUpdateCoordinator({
   };
   async function check(signal: AbortSignal) {
     const id = source();
+    const previous = state;
+    const wasReady = readySource === id && ['ready', 'blocked'].includes(previous.status);
     state = {
       ...state,
       status: 'checking',
@@ -83,6 +99,13 @@ export function createUpdateCoordinator({
       const release = releaseSchema.parse(info.release);
       if (release.arch !== process.arch)
         throw new Error('The Studio release is for a different Mac architecture.');
+      // An explicit refresh may discover a newer release, but an unchanged feed
+      // must retain the verified download and any active-work blocker.
+      if (wasReady && previous.release?.build === release.build) {
+        state = previous;
+        return;
+      }
+      readySource = undefined;
       state = {
         ...state,
         status: 'downloading',
@@ -122,6 +145,13 @@ export function createUpdateCoordinator({
             ? 'Update ready for this Mac. Studio is current and its work will keep running.'
             : 'Update ready for this Mac.',
       };
+    } catch (error) {
+      if (wasReady && readySource === id && !signal.aborted && !disposed) {
+        state = {
+          ...previous,
+          message: `Could not check for a newer release: ${message(error)} The previously verified update is still ready.`,
+        };
+      } else throw error;
     } finally {
       peer?.close();
     }
@@ -142,7 +172,11 @@ export function createUpdateCoordinator({
       const remote = peer
         ? client(maintenanceContract, peer.connection, { pathPrefix: 'taixuUpdateV1' })
         : undefined;
-      const info = remote ? await remote.info() : undefined;
+      const readInfo = () =>
+        remote
+          ? remote.info()
+          : readRelease(host.root).then((release) => ({ build: host.build, release }));
+      const info = await readInfo();
       signal.throwIfAborted();
       const localUpdate = host.build !== release.build;
       const studioUpdate = !!remote && info?.build !== release.build;
@@ -155,6 +189,10 @@ export function createUpdateCoordinator({
           );
         unconfirmedStudioBuilds.delete(id!);
       }
+      const assertSelectedRelease = (latest: TaixuRelease | null) => {
+        if (latest?.build !== release.build) throw new ReleaseChangedError(latest);
+      };
+      assertSelectedRelease(info.release);
       if (localUpdate) {
         checkingComputer = 'This Mac';
         state = { ...state, message: 'Checking active work and unsaved files on this Mac…' };
@@ -165,8 +203,21 @@ export function createUpdateCoordinator({
       if (remote && studioUpdate) {
         checkingComputer = 'Studio';
         state = { ...state, message: 'Checking active work and unsaved files on Studio…' };
-        remoteLease = await remote.prepare({ build: release.build }, { timeoutMs: 120000 });
+        try {
+          remoteLease = await remote.prepare({ build: release.build }, { timeoutMs: 120000 });
+        } catch (error) {
+          // Publication can race preparation. Check evidence rather than matching
+          // an older host's error text or leaving a retired release on Retry.
+          const latest = await readInfo().catch(() => undefined);
+          signal.throwIfAborted();
+          if (latest) assertSelectedRelease(latest.release);
+          throw error;
+        }
       }
+      signal.throwIfAborted();
+      // Preparation can take minutes. A different release requires a new review;
+      // never silently install it, or restart Studio back onto the retired build.
+      assertSelectedRelease((await readInfo()).release);
       signal.throwIfAborted();
       if (remote && remoteLease) {
         checkingComputer = 'Studio';
@@ -238,7 +289,17 @@ export function createUpdateCoordinator({
         };
       }
     } catch (error) {
-      if (!signal.aborted && !disposed)
+      if (!signal.aborted && !disposed && error instanceof ReleaseChangedError) {
+        readySource = undefined;
+        state = {
+          ...state,
+          status: 'error',
+          release: null,
+          target: undefined,
+          progress: 0,
+          message: error.message,
+        };
+      } else if (!signal.aborted && !disposed)
         state = {
           ...state,
           status: 'blocked',
@@ -253,8 +314,12 @@ export function createUpdateCoordinator({
       peer?.close();
     }
   }
-  const checkNow = () => {
-    if (!['ready', 'blocked', 'preparing', 'installing', 'downloading'].includes(state.status))
+  const checkNow = (explicit = false) => {
+    const protectedStates = explicit
+      ? ['preparing', 'installing', 'downloading']
+      : ['ready', 'blocked', 'preparing', 'installing', 'downloading'];
+    // A refresh cannot erase an uncertain restart or let another build bypass it.
+    if (!protectedStates.includes(state.status) && !unconfirmedStudioBuilds.has(source() ?? ''))
       start(check);
     return status();
   };
@@ -262,7 +327,7 @@ export function createUpdateCoordinator({
   const timer = setInterval(checkNow, 60 * 60 * 1000);
   return {
     status,
-    check: checkNow,
+    check: () => checkNow(true),
     install() {
       if (!['ready', 'blocked'].includes(state.status))
         throw new Error('Wait for the update to finish downloading.');

@@ -166,7 +166,12 @@ work and commit-time activity checks.
 `preparing` means readiness is being checked. `installing` is shown only after a restart
 commit is accepted. A refused readiness check becomes `blocked`, retains the staged
 verified release, and offers a direct install retry without downloading again. Periodic
-checks must not replace a ready or blocked release. A lost Studio commit reply requires
+checks must not replace a ready or blocked release. An explicit check may refresh it;
+an unchanged feed retains the verified bundle and readiness blocker. Before reserving
+either Mac and again before restart commit, compare the selected build with the current
+feed. A changed or withdrawn release clears the selection and offers a fresh check and
+review, never an automatic replacement install. Recheck the feed after a Studio prepare
+refusal to detect publication racing an older host. A lost Studio commit reply requires
 observing its target build before proceeding; never replay that commit on retry.
 
 Laptop shutdown disposes the Studio connection without clearing `taixu-studio.json`.

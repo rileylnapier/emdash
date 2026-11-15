@@ -33,6 +33,10 @@ export function mountUpdateControls(parent: HTMLElement) {
   const button = document.createElement('button');
   button.type = 'button';
   button.textContent = 'Check for updates';
+  const newer = document.createElement('button');
+  newer.type = 'button';
+  newer.textContent = 'Check for newer release';
+  newer.hidden = true;
   const close = document.createElement('button');
   close.type = 'button';
   close.textContent = 'Close';
@@ -40,7 +44,7 @@ export function mountUpdateControls(parent: HTMLElement) {
     details.open = false;
     summary.focus();
   };
-  panel.append(title, versions, message, progress, notes, explanation, button, close);
+  panel.append(title, versions, message, progress, notes, explanation, button, newer, close);
   details.append(summary, panel);
   parent.append(details);
   let disposed = false;
@@ -111,6 +115,8 @@ export function mountUpdateControls(parent: HTMLElement) {
             : 'Updates are prepared on this Mac. Finish active work and pause schedules before restarting Taixu.';
     button.disabled =
       pending || ['checking', 'downloading', 'preparing', 'installing'].includes(next.status);
+    newer.hidden = !['ready', 'blocked'].includes(next.status);
+    newer.disabled = button.disabled;
     const updateLabel =
       next.target === 'this-mac' || !next.remote
         ? 'Update this Mac'
@@ -142,15 +148,16 @@ export function mountUpdateControls(parent: HTMLElement) {
       reading = false;
     }
   }
-  button.onclick = async () => {
+  async function request(checkOnly = false) {
     if (pending || disposed) return;
     pending = true;
     revision++;
     button.disabled = true;
+    newer.disabled = true;
     try {
       const control = await getStudioClient();
       const next =
-        state && ['ready', 'blocked'].includes(state.status)
+        !checkOnly && state && ['ready', 'blocked'].includes(state.status)
           ? await control.installUpdate()
           : await control.checkUpdate();
       pending = false;
@@ -160,11 +167,14 @@ export function mountUpdateControls(parent: HTMLElement) {
         message.textContent =
           error instanceof Error ? error.message.slice(0, 600) : 'Could not update Taixu.';
         button.disabled = false;
+        newer.disabled = false;
       }
     } finally {
       pending = false;
     }
-  };
+  }
+  button.onclick = () => void request();
+  newer.onclick = () => void request(true);
   void refresh();
   const timer = setInterval(() => void refresh(), 2000);
   const dispose = () => {
