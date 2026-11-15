@@ -96,6 +96,7 @@ import {
   resolveProjectConfig,
   type ProjectConfigHostDefaults,
 } from './project-config';
+import { retireCheckout } from './retire-checkout';
 import { listRepositoryWorktrees, observeWorkspaceGit } from './scan/observe-git';
 import { RegistryScanner, type RegistryScannerDeps, type ScanLanding } from './scan/scanner';
 import type { ScanRequest, ScanTarget } from './scan/scheduler';
@@ -1029,6 +1030,56 @@ export class WorkspaceRegistryRuntime {
             })
           )
         );
+      } catch (error) {
+        return err({
+          type: 'filesystem-error',
+          message: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        this.usage.invalidate(record.id);
+        release();
+        this.settleScan({ kind: 'workspace', id: record.id, mode: 'full' });
+      }
+    });
+  }
+
+  /** Retain the registry and attachments for archive context; remove only the clean checkout. */
+  retireCheckout(input: { workspaceId: string }): Promise<Result<void, CleanArtifactsError>> {
+    return this.workspaceClaims.runExclusive(input.workspaceId, async () => {
+      const record = this.store.get(input.workspaceId);
+      if (!record) return err({ type: 'workspace-not-found', workspaceId: input.workspaceId });
+      if (record.kind !== 'worktree')
+        return err({ type: 'filesystem-error', message: 'Only task worktrees can be retired.' });
+      const repositoryPath = await this.resolveRepositoryPath(record, this.projectRootFor(record));
+      if (!repositoryPath)
+        return err({
+          type: 'filesystem-error',
+          message: 'Repository is unavailable. Reconnect before cleanup.',
+        });
+      const release = this.muteScans(record.id);
+      try {
+        await this.gitContext.locks.withWriter(record.path, () =>
+          retireCheckout({
+            workspacePath: record.path,
+            repositoryPath,
+            nestedWorkspacePaths: this.workspacesInside(record),
+            createGitExec: (cwd) => this.gitContext.exec(cwd, { tier: 'activation' }),
+            assertIdle: async () => {
+              const runtime = this.toWire(this.store.get(record.id) ?? record).runtime;
+              if (
+                (await this.countSessions(record.path)) > 0 ||
+                runtime?.creation ||
+                runtime?.activation?.phase === 'preparing' ||
+                Object.values(runtime?.activation?.scripts ?? {}).some(
+                  (s) => s === 'running' || s === 'pending'
+                ) ||
+                runtime?.lifecycle?.some((s) => s.status === 'running')
+              )
+                throw new Error('Workspace still has sessions or scripts. Wait before cleanup.');
+            },
+          })
+        );
+        return ok(undefined);
       } catch (error) {
         return err({
           type: 'filesystem-error',

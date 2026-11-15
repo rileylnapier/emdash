@@ -10,6 +10,7 @@ import {
   getTaskGitCheckoutStore,
   getTaskPrAssociationStore,
 } from '@core/features/source-control/api/browser/stores/task-source-control-selectors';
+import { reviewWorkArchives } from '@core/features/taixu/api/browser/review-work-archive';
 import { getTaskManagerStore } from '@core/features/tasks/api/browser/task-state/task-selectors';
 import { TaskContextMenu } from '@core/features/tasks/contributions/browser/task-context-menu';
 import { TaskGitDiffStats } from '@core/features/tasks/contributions/browser/task-git-diff-stats';
@@ -37,8 +38,8 @@ export const TaskRow = observer(function TaskRow({
   const openDeleteTask = useOpenModal('deleteTaskModal');
   const taskManager = getTaskManagerStore(task.data.projectId);
 
-  const handleArchive = () => void taskManager?.archiveTask(task.data.id);
-  const handleRestore = () => void taskManager?.restoreTask(task.data.id);
+  const handleArchive = () =>
+    void reviewWorkArchives([{ taskId: task.data.id, projectId: task.data.projectId }]);
   const handleDelete = () => {
     void openDeleteTask({
       projectId: task.data.projectId,
@@ -78,7 +79,7 @@ export const TaskRow = observer(function TaskRow({
       onUnpin={() => void task.setPinned(false)}
       onRename={handleRename}
       onArchive={handleArchive}
-      onRestore={handleRestore}
+      onReadArchive={handleArchive}
       onConvertAutomation={undefined}
       onDelete={handleDelete}
     >

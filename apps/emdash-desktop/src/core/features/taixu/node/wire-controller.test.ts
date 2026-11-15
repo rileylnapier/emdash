@@ -30,6 +30,8 @@ const mocks = vi.hoisted(() => ({
   updateGuard: vi.fn(),
   archiveWork: vi.fn(),
   restoreWork: vi.fn(),
+  listArchives: vi.fn(),
+  readArchive: vi.fn(),
 }));
 vi.mock('./update-guard', () => ({
   registerHeadUpdateGuard: (guard: (hold: boolean) => Promise<void>) => {
@@ -252,7 +254,11 @@ beforeEach(async () => {
       prepareFollowup: mocks.prepareFollowup,
       readWorkReply: mocks.readWorkReply,
       readWorkImageContext: mocks.readWorkImageContext,
-      archiveWork: Object.assign(mocks.archiveWork, { restore: mocks.restoreWork }),
+      archiveWork: Object.assign(mocks.archiveWork, {
+        restore: mocks.restoreWork,
+        list: mocks.listArchives,
+        read: mocks.readArchive,
+      }),
       workMerge: {
         review: mocks.reviewMerge,
         approve: mocks.approveMerge,
@@ -663,6 +669,7 @@ it('does not archive without a durable intent, and records readiness blockers', 
     status: 'blocked',
     message: expect.stringContaining('Studio'),
   });
+  mocks.getTasks.mockResolvedValueOnce([]);
   await expect(wire.client.archiveWork({ ...target, projectId: 'other' })).rejects.toThrow();
   expect(mocks.archiveWork).toHaveBeenCalledTimes(1);
 });
@@ -714,4 +721,22 @@ it('retains a report when image identity is temporarily unavailable', async () =
   expect(
     (await headRequest('image-context', { targets: [{ taskId, projectId: 'project' }] })).result
   ).toEqual([]);
+});
+
+it('allows an unlinked native task to archive with context without merging or a Head receipt', async () => {
+  mocks.getTasks.mockResolvedValue([{ id: taskId, projectId: 'project' }]);
+  mocks.archiveWork.mockResolvedValue({
+    archived: true,
+    cleaned: true,
+    message: 'Checkout removed.',
+  });
+  await expect(
+    wire.client.archiveWork({ taskId, projectId: 'project', context: 'Decision and next step.' })
+  ).resolves.toMatchObject({ cleaned: true });
+  expect(mocks.observeWork).not.toHaveBeenCalled();
+  expect(mocks.archiveWork).toHaveBeenCalledWith({
+    taskId,
+    projectId: 'project',
+    context: 'Decision and next step.',
+  });
 });

@@ -69,7 +69,22 @@ export const mergeReceiptSchema = z.object({
   status: z.enum(['pending', 'merged', 'failed', 'unknown']),
   created: z.boolean(),
 });
-export const archiveInputSchema = workTargetSchema;
+export const archiveInputSchema = workTargetSchema.extend({
+  context: z.string().trim().min(1).max(24000).optional(),
+});
+export const workArchiveNoteSchema = workTargetSchema.extend({
+  name: z.string(),
+  context: z.string().max(24000),
+  workspacePath: z.string(),
+  branch: z.string().nullable(),
+  commit: z.string().nullable(),
+  urls: z.array(z.string()),
+  savedAt: z.string(),
+  archived: z.boolean(),
+  cleaned: z.boolean(),
+  message: z.string(),
+});
+export type WorkArchiveNote = z.infer<typeof workArchiveNoteSchema>;
 export const archiveResultSchema = z.object({
   archived: z.boolean(),
   cleaned: z.boolean(),
@@ -80,6 +95,11 @@ export type WorkArchiveInput = z.infer<typeof archiveInputSchema>;
 export const taixuContract = defineContract({
   apps: procedure({ input: z.object({}), output: appsStatusSchema }),
   appAction: procedure({ input: appActionSchema, output: appsStatusSchema, callTimeoutMs: 90000 }),
+  readArchive: procedure({ input: workTargetSchema, output: workArchiveNoteSchema.nullable() }),
+  listArchives: procedure({
+    input: z.object({ offset: z.number().int().min(0).default(0) }),
+    output: z.object({ notes: z.array(workArchiveNoteSchema), nextOffset: z.number().nullable() }),
+  }),
   archiveWork: procedure({
     input: archiveInputSchema,
     output: archiveResultSchema,

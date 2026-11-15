@@ -13,7 +13,7 @@ interface TaskContextMenuProps {
   onUnpin: () => void;
   onRename: () => void;
   onArchive: () => void;
-  onRestore?: () => void;
+  onReadArchive?: () => void;
   onReconnect?: () => void;
   onConvertAutomation?: () => void;
   onDelete: () => void;
@@ -30,7 +30,7 @@ export function TaskContextMenu({
   onUnpin,
   onRename,
   onArchive,
-  onRestore,
+  onReadArchive,
   onReconnect,
   onConvertAutomation,
   onDelete,
@@ -96,10 +96,10 @@ export function TaskContextMenu({
             {archiveDisabledReason}
           </span>
         )}
-        {isArchived && onRestore && (
-          <ContextMenu.Item onClick={onRestore}>
-            <RotateCcw className="size-4" />
-            Restore
+        {isArchived && onReadArchive && (
+          <ContextMenu.Item onClick={onReadArchive}>
+            <Archive className="size-4" />
+            Saved context
           </ContextMenu.Item>
         )}
         {branchName && (

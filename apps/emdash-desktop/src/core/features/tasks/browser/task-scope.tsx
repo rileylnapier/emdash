@@ -10,9 +10,9 @@ import {
 } from '@core/features/source-control/api/browser/git-action-handlers';
 import { getGitRepositoryStore } from '@core/features/source-control/api/browser/stores/source-control-selectors';
 import { getTaskGitCheckoutStore } from '@core/features/source-control/api/browser/stores/task-source-control-selectors';
+import { reviewWorkArchives } from '@core/features/taixu/api/browser/review-work-archive';
 import {
   getRegisteredTaskData,
-  getTaskManagerStore,
   getTaskStore,
 } from '@core/features/tasks/api/browser/task-state/task-selectors';
 import { taskViewScope } from '@core/features/tasks/contributions/scopes';
@@ -312,9 +312,7 @@ const taskScopeImplementation = {
       );
     },
     execute: () => {
-      void getTaskManagerStore(params.projectId)
-        ?.archiveTask(params.taskId)
-        .catch(() => toast.error('Could not archive task'));
+      void reviewWorkArchives([params]);
     },
   }),
   'task.convertAutomation': (params) => ({

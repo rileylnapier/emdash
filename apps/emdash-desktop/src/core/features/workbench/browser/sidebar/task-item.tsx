@@ -5,6 +5,7 @@ import {
   getTaskGitCheckoutStore,
   getTaskPrAssociationStore,
 } from '@core/features/source-control/api/browser/stores/task-source-control-selectors';
+import { reviewWorkArchives } from '@core/features/taixu/api/browser/review-work-archive';
 import { type TaskStore } from '@core/features/tasks/api/browser/stores/task-store';
 import {
   getTaskManagerStore,
@@ -58,8 +59,7 @@ export const SidebarTaskItem = observer(function SidebarTaskItem({
   };
 
   const handleArchive = () => {
-    if (isActive) navigate(projectViewDef({ projectId }));
-    void taskManager?.archiveTask(taskId);
+    void reviewWorkArchives([{ taskId, projectId }]);
   };
 
   const handleRename = () => {
