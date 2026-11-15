@@ -9,6 +9,7 @@ const labels = {
   'needs-install': 'Update required',
   planned: 'Coming later',
   unavailable: 'Unavailable',
+  updating: 'Updating…',
 };
 
 export function AppsPanel() {
@@ -108,6 +109,10 @@ export function AppsPanel() {
         </p>
       )}
       {status?.apps.map((app) => {
+        const update = app.updates;
+        const release = update?.release;
+        const updating = update?.busy || update?.phase === 'restarting';
+        const canInstall = update?.release && ['ready', 'blocked'].includes(update.phase);
         const available = ['running', 'idle', 'stopped'].includes(app.state);
         const active = app.state === 'running' || app.state === 'idle';
         const stateLabel =
@@ -134,6 +139,7 @@ export function AppsPanel() {
                 {app.version && ` · ${app.version}`}
               </p>
             )}
+            {!active && app.version && <p className="taixu-app-meta">Installed · {app.version}</p>}
             {app.endpoint && (
               <p className="taixu-app-meta">
                 Local endpoint: <code>{app.endpoint}</code>
@@ -142,25 +148,75 @@ export function AppsPanel() {
             {app.blockers.length > 0 && (
               <p className="taixu-app-blockers">{app.blockers.join(' ')}</p>
             )}
+            {update && (
+              <div
+                className="taixu-app-update"
+                aria-label={`${app.name} updates`}
+                aria-live="polite"
+              >
+                <p className="taixu-app-meta">
+                  {update.phase === 'downloading'
+                    ? `Downloading update · ${Math.round(update.progress * 100)}%`
+                    : update.phase === 'checking'
+                      ? 'Checking for updates…'
+                      : update.phase === 'preparing'
+                        ? 'Checking saved work and preparing update…'
+                        : update.phase === 'restarting'
+                          ? 'Restarting to update…'
+                          : canInstall
+                            ? `Version ${update.release?.version} verified and ready`
+                            : update.phase === 'current'
+                              ? 'Up to date'
+                              : 'Updates'}
+                </p>
+                {update.message && <p className="taixu-app-meta">{update.message}</p>}
+                {update.blockers.length > 0 && (
+                  <p className="taixu-app-blockers">{update.blockers.join(' ')}</p>
+                )}
+              </div>
+            )}
+            {active && !update && (
+              <p className="taixu-app-meta">
+                Update once from this app’s Settings → Updates to enable hub updates.
+              </p>
+            )}
             {available && (
               <div className="taixu-app-actions">
+                {(update?.supported || !active) && (
+                  <button
+                    disabled={!!busy || !!updating || (active && !update?.configured)}
+                    onClick={() => void act({ appId: app.id, action: 'check-update' })}
+                  >
+                    {active ? 'Check for updates' : 'Start & check updates'}
+                  </button>
+                )}
+                {canInstall && release && (
+                  <button
+                    disabled={!!busy || !!updating}
+                    onClick={() =>
+                      void act({ appId: app.id, action: 'update', build: release.build })
+                    }
+                  >
+                    Update to {release.version} on {status.computer}
+                  </button>
+                )}
                 {app.state !== 'running' && (
                   <button
-                    disabled={!!busy}
+                    disabled={!!busy || !!updating}
                     onClick={() => void act({ appId: app.id, action: 'start' })}
                   >
                     {startLabel}
                   </button>
                 )}
                 <button
-                  disabled={!!busy}
+                  disabled={!!busy || !!updating}
                   onClick={() => void act({ appId: app.id, action: 'open' })}
                 >
                   Open on {status.computer}
                 </button>
                 {active && (
                   <button
-                    disabled={!!busy || app.blockers.length > 0}
+                    disabled={!!busy || !!updating || app.blockers.length > 0}
                     onClick={() => void act({ appId: app.id, action: 'stop' })}
                   >
                     Stop service
