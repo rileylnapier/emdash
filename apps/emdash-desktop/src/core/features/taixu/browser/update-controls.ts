@@ -21,6 +21,7 @@ export function mountUpdateControls(parent: HTMLElement) {
   panel.setAttribute('aria-label', 'Taixu updates');
   const title = document.createElement('h2');
   title.textContent = 'Taixu updates';
+  const versions = document.createElement('p');
   const message = document.createElement('p');
   message.setAttribute('role', 'status');
   const progress = document.createElement('progress');
@@ -39,7 +40,7 @@ export function mountUpdateControls(parent: HTMLElement) {
     details.open = false;
     summary.focus();
   };
-  panel.append(title, message, progress, notes, explanation, button, close);
+  panel.append(title, versions, message, progress, notes, explanation, button, close);
   details.append(summary, panel);
   parent.append(details);
   let disposed = false;
@@ -89,6 +90,13 @@ export function mountUpdateControls(parent: HTMLElement) {
               ? 'Checking readiness…'
               : 'Updates';
     message.textContent = next.message;
+    versions.hidden = !next.currentVersion && !next.release?.version;
+    versions.textContent = [
+      next.currentVersion ? `Installed Taixu ${next.currentVersion} on this Mac` : '',
+      next.release?.version ? `Release ${next.release.version}` : '',
+    ]
+      .filter(Boolean)
+      .join(' · ');
     progress.hidden = next.status !== 'downloading';
     progress.value = next.progress;
     notes.hidden = !next.release?.notes;

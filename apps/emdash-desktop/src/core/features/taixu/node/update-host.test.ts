@@ -14,7 +14,7 @@ const mock = vi.hoisted(() => ({
   relaunch: vi.fn(),
 }));
 vi.mock('electron', () => ({
-  app: { isPackaged: true, quit: mock.quit, relaunch: mock.relaunch },
+  app: { isPackaged: true, quit: mock.quit, relaunch: mock.relaunch, getVersion: () => '1.3.0' },
 }));
 vi.mock('./update-files', () => ({
   updateRoot: () => '/unused',

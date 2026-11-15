@@ -38,6 +38,7 @@ async function setup({ studioCurrent = false, laptopCurrent = false } = {}) {
   const order: string[] = [];
   let source: string | null = 'studio';
   const host = {
+    version: '1.3.0',
     build: laptopCurrent ? release.build : 'c'.repeat(64),
     root: '/unused',
     stage: vi.fn(async () => {}),
@@ -70,6 +71,7 @@ async function setup({ studioCurrent = false, laptopCurrent = false } = {}) {
   coordinator.check();
   await vi.advanceTimersByTimeAsync(0);
   expect(coordinator.status().status).toBe('ready');
+  expect(coordinator.status().currentVersion).toBe('1.3.0');
   return {
     host,
     order,

@@ -21,6 +21,7 @@ export function createUpdateCoordinator({
     status: 'idle',
     hold: null,
     current: host.build,
+    currentVersion: host.version,
     release: null,
     progress: 0,
     message: 'Updates come from your Studio over SSH.',
