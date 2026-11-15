@@ -147,3 +147,45 @@ it('shows Restarting only after a preparing response advances to a committed res
     .element(page.getByRole('button', { name: 'Restarting…', exact: true }))
     .toBeDisabled();
 });
+
+it('lets a waiting update check for a newer release without requesting a restart', async () => {
+  const ready = {
+    ...idle,
+    status: 'blocked',
+    currentVersion: '1.4.0',
+    release: { version: '1.5.0', notes: 'Older release' },
+  };
+  mock.status.mockResolvedValue(ready);
+  mock.check.mockResolvedValue({ ...ready, status: 'checking' });
+  dispose = mountUpdateControls(document.body);
+  await page.getByText('Update ready', { exact: true }).click();
+  await page.getByRole('button', { name: 'Check for newer release', exact: true }).click();
+  expect(mock.check).toHaveBeenCalledOnce();
+  expect(mock.install).not.toHaveBeenCalled();
+  await expect
+    .element(page.getByRole('button', { name: 'Check for updates', exact: true }))
+    .toBeDisabled();
+});
+
+it('replaces stale-release retry with a fresh check and clears the old version and notes', async () => {
+  mock.status.mockResolvedValue({
+    ...idle,
+    status: 'ready',
+    release: { version: '1.5.0', notes: 'Older release' },
+  });
+  mock.install.mockResolvedValue({
+    ...idle,
+    status: 'error',
+    message: 'The release changed to Taixu 1.6.1. Check for updates.',
+  });
+  mock.check.mockResolvedValue({ ...idle, status: 'checking' });
+  dispose = mountUpdateControls(document.body);
+  await page.getByText('Update ready', { exact: true }).click();
+  await page.getByRole('button', { name: 'Update both Macs', exact: true }).click();
+  await expect.element(page.getByRole('status')).toHaveTextContent('release changed');
+  expect(document.querySelector('.taixu-release-notes')!.textContent).toBe('');
+  expect(document.querySelector('.taixu-update')!.textContent).not.toContain('1.5.0');
+  await page.getByRole('button', { name: 'Check for updates', exact: true }).click();
+  expect(mock.check).toHaveBeenCalledOnce();
+  expect(mock.install).toHaveBeenCalledOnce();
+});

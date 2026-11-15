@@ -52,6 +52,7 @@ async function setup({ studioCurrent = false, laptopCurrent = false } = {}) {
     cancel: vi.fn(async () => {}),
   };
   mock.info.mockResolvedValue({ build: studioCurrent ? release.build : 'old', release });
+  mock.read.mockResolvedValue(release);
   mock.prepare.mockImplementation(async () => {
     order.push('remote prepare');
     return 'remote';
@@ -85,6 +86,7 @@ async function setup({ studioCurrent = false, laptopCurrent = false } = {}) {
 it('owns a background download, then prepares both Macs and confirms Studio before local commit', async () => {
   const { order, host } = await setup();
   coordinator.check();
+  await vi.advanceTimersByTimeAsync(0);
   expect(mock.download).toHaveBeenCalledOnce();
   coordinator.install();
   await vi.advanceTimersByTimeAsync(2100);
@@ -249,6 +251,9 @@ it('reconciles a lost Studio commit on retry without ever replaying that commit'
   mock.commit.mockRejectedValueOnce(new Error('Lost reply'));
   coordinator.install();
   await vi.advanceTimersByTimeAsync(91000);
+  coordinator.check();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(mock.download).toHaveBeenCalledOnce();
   coordinator.install();
   await vi.advanceTimersByTimeAsync(0);
   expect(coordinator.status().status).toBe('blocked');
@@ -261,4 +266,137 @@ it('reconciles a lost Studio commit on retry without ever replaying that commit'
   expect(host.commit).toHaveBeenCalledOnce();
   expect(mock.commit).toHaveBeenCalledOnce();
   expect(mock.download).toHaveBeenCalledOnce();
+});
+
+const newer = { ...release, build: 'd'.repeat(64), version: '1.6.1' };
+
+it('does not let a newer release bypass an unconfirmed Studio restart', async () => {
+  const { host } = await setup();
+  mock.commit.mockRejectedValueOnce(new Error('Lost reply'));
+  coordinator.install();
+  await vi.advanceTimersByTimeAsync(91000);
+  mock.info.mockResolvedValue({ build: newer.build, release: newer });
+  coordinator.check();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(coordinator.status()).toMatchObject({ status: 'blocked', release });
+  expect(mock.download).toHaveBeenCalledOnce();
+  coordinator.install();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(coordinator.status().message).toContain('previous Studio restart is not confirmed');
+  expect(mock.commit).toHaveBeenCalledOnce();
+  expect(host.commit).not.toHaveBeenCalled();
+});
+
+it('retires a stale laptop selection when Studio has moved on, without preparing either Mac', async () => {
+  const { host } = await setup();
+  mock.info.mockResolvedValue({ build: newer.build, release: newer });
+  coordinator.install();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(coordinator.status()).toMatchObject({
+    status: 'error',
+    release: null,
+    target: undefined,
+    progress: 0,
+    message: expect.stringContaining('Check for updates'),
+  });
+  expect(host.prepare).not.toHaveBeenCalled();
+  expect(mock.prepare).not.toHaveBeenCalled();
+  coordinator.check();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(coordinator.status()).toMatchObject({
+    status: 'ready',
+    release: newer,
+    target: 'this-mac',
+  });
+  expect(host.commit).not.toHaveBeenCalled();
+  expect(mock.commit).not.toHaveBeenCalled();
+  coordinator.install();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(host.prepare).toHaveBeenCalledWith(newer.build);
+  expect(host.commit).toHaveBeenCalledOnce();
+  expect(mock.commit).not.toHaveBeenCalled();
+});
+
+it('allows an explicit refresh of a ready release but never refreshes it on the hourly timer', async () => {
+  const { host } = await setup();
+  mock.info.mockResolvedValue({ build: newer.build, release: newer });
+  await vi.advanceTimersByTimeAsync(3600000);
+  expect(mock.download).toHaveBeenCalledOnce();
+  expect(coordinator.status().release).toEqual(release);
+  coordinator.check();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(coordinator.status()).toMatchObject({ status: 'ready', release: newer });
+  expect(mock.download).toHaveBeenCalledTimes(2);
+  expect(host.stage).toHaveBeenLastCalledWith(newer, expect.any(String));
+  expect(host.commit).not.toHaveBeenCalled();
+});
+
+it('retains the verified release if an explicit refresh cannot reach Studio', async () => {
+  await setup();
+  mock.info.mockRejectedValueOnce(new Error('Offline'));
+  coordinator.check();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(coordinator.status()).toMatchObject({
+    status: 'ready',
+    release,
+    message: expect.stringContaining('Could not check for a newer release'),
+  });
+  expect(mock.download).toHaveBeenCalledOnce();
+});
+
+it('cancels both reservations if the feed changes during preparation', async () => {
+  const { host } = await setup();
+  mock.prepare.mockImplementationOnce(async () => {
+    mock.info.mockResolvedValue({ build: 'old', release: newer });
+    return 'remote';
+  });
+  coordinator.install();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(coordinator.status()).toMatchObject({ status: 'error', release: null });
+  expect(host.cancel).toHaveBeenCalledWith('local');
+  expect(mock.cancel).toHaveBeenCalledWith({ lease: 'remote' });
+  expect(host.commit).not.toHaveBeenCalled();
+  expect(mock.commit).not.toHaveBeenCalled();
+});
+
+it('recognizes publication racing an older Studio host refusal without parsing its error', async () => {
+  const { host } = await setup();
+  mock.prepare.mockImplementationOnce(async () => {
+    mock.info.mockResolvedValue({ build: 'old', release: newer });
+    throw new Error('The selected release is no longer available.');
+  });
+  coordinator.install();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(coordinator.status()).toMatchObject({ status: 'error', release: null });
+  expect(host.cancel).toHaveBeenCalledWith('local');
+  expect(mock.commit).not.toHaveBeenCalled();
+  expect(host.commit).not.toHaveBeenCalled();
+});
+
+it('offers a fresh check when a release is withdrawn', async () => {
+  const { host } = await setup();
+  mock.info.mockResolvedValue({ build: 'old', release: null });
+  coordinator.install();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(coordinator.status()).toMatchObject({
+    status: 'error',
+    release: null,
+    message: expect.stringContaining('no longer shared'),
+  });
+  expect(host.prepare).not.toHaveBeenCalled();
+  expect(mock.prepare).not.toHaveBeenCalled();
+});
+
+it('also retires a stale release when updating on Studio itself', async () => {
+  const { host, switchSource } = await setup();
+  switchSource();
+  coordinator.check();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(coordinator.status()).toMatchObject({ status: 'ready', remote: false });
+  mock.read.mockResolvedValue(newer);
+  coordinator.install();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(coordinator.status()).toMatchObject({ status: 'error', release: null });
+  expect(host.prepare).not.toHaveBeenCalled();
+  expect(host.commit).not.toHaveBeenCalled();
 });
