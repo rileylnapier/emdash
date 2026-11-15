@@ -433,6 +433,35 @@ it('persists merge receipts through the private worker and prevents updating dur
     message: 'Merged',
   });
 });
+it('holds updates during app actions and refuses new actions while an update is reserved', async () => {
+  await linkedWork();
+  const action = wire.client.appAction({ appId: 'flow', action: 'start' });
+  await vi.waitFor(() =>
+    expect(worker.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'apps-request' })
+    )
+  );
+  await expect(mocks.updateGuard(true)).rejects.toThrow('in progress');
+  const request = worker.postMessage.mock.calls.find(([m]) => m.type === 'apps-request')?.[0];
+  worker.emit('message', {
+    type: 'apps-result',
+    id: request.id,
+    result: { computer: 'Studio', apps: [] },
+  });
+  await expect(action).resolves.toEqual({ computer: 'Studio', apps: [] });
+  const holding = mocks.updateGuard(true);
+  await expect(wire.client.appAction({ appId: 'flow', action: 'stop' })).rejects.toThrow(
+    'updating'
+  );
+  const hold = worker.postMessage.mock.calls.find(([m]) => m.type === 'update-hold')?.[0];
+  worker.emit('message', { type: 'update-held', id: hold.id });
+  await holding;
+  await expect(wire.client.appAction({ appId: 'flow', action: 'open' })).rejects.toThrow(
+    'updating'
+  );
+  expect(worker.postMessage.mock.calls.filter(([m]) => m.type === 'apps-request')).toHaveLength(1);
+});
+
 it('blocks approvals while the worker update acknowledgement is pending, and restores access on refusal', async () => {
   await linkedWork();
   const holding = mocks.updateGuard(true);

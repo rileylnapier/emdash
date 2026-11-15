@@ -39,13 +39,17 @@ it('shows release notes as text and requires an explicit click to install from r
     ...idle,
     status: 'ready',
     message: 'Ready',
-    release: { notes: '<img src=x onerror=alert(1)> New buildings' },
+    currentVersion: '1.3.0',
+    release: { version: '1.3.1', notes: '<img src=x onerror=alert(1)> New buildings' },
   };
   mock.status.mockResolvedValue(ready);
   mock.install.mockResolvedValue({ ...ready, status: 'installing' });
   dispose = mountUpdateControls(document.body);
   await expect.element(page.getByText('Update ready', { exact: true })).toBeVisible();
   await page.getByText('Update ready', { exact: true }).click();
+  await expect
+    .element(page.getByText('Installed Taixu 1.3.0 on this Mac · Release 1.3.1', { exact: true }))
+    .toBeVisible();
   await expect.element(page.getByText(ready.release.notes, { exact: true })).toBeVisible();
   expect(document.querySelector('.taixu-update img')).toBeNull();
   expect(mock.install).not.toHaveBeenCalled();

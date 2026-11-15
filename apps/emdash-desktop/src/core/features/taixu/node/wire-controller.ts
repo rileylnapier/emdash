@@ -21,6 +21,7 @@ import {
   type WorkTarget,
   type MergeReceiptInput,
 } from '../api/contract';
+import { requestApps } from './apps-channel';
 import { prepareDataHome } from './data-home';
 import { readProjectDocuments } from './project-documents';
 import { registerHeadUpdateGuard } from './update-guard';
@@ -289,6 +290,8 @@ export function createTaixuWireController({
     stop();
     if (!dataRoot) await writeFile(configFile, JSON.stringify({ root }), { mode: 0o600 });
     const env = { ...process.env };
+    env.TAIXU_APP_SERVICES = app.isPackaged && process.platform === 'darwin' ? '1' : '0';
+    env.TAIXU_APP_BUNDLE = app.isPackaged ? path.resolve(app.getPath('exe'), '../../..') : '';
     if (dataRoot) env.TAIXU_DATA_ROOT = dataRoot;
     delete env.ELECTRON_RUN_AS_NODE;
     delete env.NODE_OPTIONS;
@@ -725,6 +728,20 @@ export function createTaixuWireController({
   }
 
   return createController(taixuContract, {
+    apps: () => {
+      if (!child || !url) throw new Error('Reconnect to Taixu to check its apps.');
+      return requestApps(child);
+    },
+    appAction: async (input) => {
+      if (!child || !url || updateHeld)
+        throw new Error('Reconnect after Taixu finishes starting or updating.');
+      activeSubmissions++;
+      try {
+        return await requestApps(child, input);
+      } finally {
+        activeSubmissions--;
+      }
+    },
     connect: ({ chooseFolder }) => {
       connecting ??= connect(chooseFolder)
         .catch(() => ({

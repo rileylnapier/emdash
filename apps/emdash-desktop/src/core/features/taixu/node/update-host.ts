@@ -137,6 +137,7 @@ export function createUpdateHost(userData: string, build: string, assertIdle: ()
     controller,
     root,
     build,
+    version: app.getVersion(),
     stage,
     prepare,
     commit,

@@ -8,6 +8,7 @@ export const buildSchema = z.string().regex(/^[a-f0-9]{64}$/);
 export const releaseSchema = z.object({
   protocol: z.literal(1),
   build: buildSchema,
+  version: z.string().min(1).max(80).optional(),
   createdAt: z.string().datetime(),
   arch: z.enum(['arm64', 'x64']),
   size: z
@@ -31,6 +32,7 @@ export const updateStateSchema = z.object({
     'error',
   ]),
   current: z.string(),
+  currentVersion: z.string().min(1).max(80).optional(),
   hold: z.string().nullable(),
   release: releaseSchema.nullable(),
   progress: z.number(),

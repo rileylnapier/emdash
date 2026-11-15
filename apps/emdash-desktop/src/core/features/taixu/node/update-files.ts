@@ -173,6 +173,17 @@ export async function verifyBundle(bundle: string, installed: string, release: T
   const resources = path.join(bundle, 'Contents/Resources');
   if ((await readFile(path.join(resources, 'taixu-build.txt'), 'utf8')).trim() !== release.build)
     throw new Error('Update build fingerprint does not match.');
+  if (release.version) {
+    const { stdout } = await run('/usr/bin/plutil', [
+      '-extract',
+      'CFBundleShortVersionString',
+      'raw',
+      '-o',
+      '-',
+      path.join(bundle, 'Contents/Info.plist'),
+    ]);
+    if (stdout.trim() !== release.version) throw new Error('Update app version does not match.');
+  }
   // Universal binaries are accepted, but the running machine's architecture must be present.
   // -verify_arch consumes every following argument as an architecture on some Xcode versions.
   await run('/usr/bin/lipo', [

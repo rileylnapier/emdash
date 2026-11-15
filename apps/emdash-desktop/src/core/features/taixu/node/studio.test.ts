@@ -1,5 +1,5 @@
 import { once } from 'node:events';
-import { mkdtemp, lstat, mkdir, rm, symlink, readFile } from 'node:fs/promises';
+import { mkdtemp, lstat, mkdir, rm, symlink, readFile, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
@@ -140,6 +140,12 @@ it('keeps window controls local and task calls remote without fallback', async (
   const wire = await peerForController(routed);
   expect(await wire.call('host.quit', undefined)).toBe('local');
   expect(await wire.call('tasks.getTasks', undefined)).toBe('studio');
+  expect(await wire.call('taixu.apps', {})).toBe('studio');
+  expect(await wire.call('taixu.appAction', { appId: 'flow', action: 'start' })).toBe('studio');
+  remote.mockRejectedValueOnce(new Error('disconnected'));
+  await expect(wire.call('taixu.appAction', { appId: 'flow', action: 'stop' })).rejects.toThrow(
+    /disconnected/
+  );
   await expect(wire.call('host.openDirectory', undefined)).rejects.toThrow(/Studio window/);
   remote.mockRejectedValueOnce(new Error('disconnected'));
   await expect(wire.call('tasks.create', {})).rejects.toThrow(/disconnected/);
@@ -154,6 +160,75 @@ async function peerForController(c: Controller) {
   await wire.call('studioHello', 'test');
   return wire;
 }
+
+it('persists local server mode without forwarding calls or changing sharing', async () => {
+  const root = await folder();
+  const local = vi.fn(async () => null);
+  const applyServerMode = vi.fn();
+  const ssh = { machines: { getMachines: async () => [] } } as unknown as SshServiceHandle;
+  const options = {
+    ssh,
+    hosts: { onInvalidate: () => () => {} },
+    local: controller(local),
+    userData: root,
+    build: 'test',
+    expose: vi.fn(() => async () => {}),
+    applyServerMode,
+  };
+  await writeFile(
+    path.join(root, 'taixu-studio.json'),
+    JSON.stringify({ selected: null, sharing: false })
+  );
+  const service = await createStudioService(options);
+  const wire = createTestWire(studioControlContract, service.controller);
+  cleanups.push(
+    () => service.dispose(),
+    () => wire.dispose()
+  );
+  expect(await wire.client.status()).toMatchObject({ serverMode: false, sharing: false });
+  await wire.client.setServerMode({ enabled: true });
+  expect(applyServerMode).toHaveBeenLastCalledWith(true);
+  expect(await wire.client.status()).toMatchObject({ serverMode: true, sharing: false });
+  await expect(wire.client.connect({ id: 'other' })).rejects.toThrow(/Open Taixu/);
+  const reopened = await createStudioService(options);
+  const restored = createTestWire(studioControlContract, reopened.controller);
+  cleanups.push(
+    () => reopened.dispose(),
+    () => restored.dispose()
+  );
+  expect(await restored.client.status()).toMatchObject({ serverMode: true, sharing: false });
+  await restored.client.setServerMode({ enabled: false });
+  expect(JSON.parse(await readFile(path.join(root, 'taixu-studio.json'), 'utf8'))).toMatchObject({
+    serverMode: false,
+    sharing: false,
+    selected: null,
+  });
+  expect(local).not.toHaveBeenCalled();
+  expect(options.expose).not.toHaveBeenCalled();
+});
+
+it('does not change the window or preference after a failed server-mode save', async () => {
+  const root = await folder();
+  const applyServerMode = vi.fn();
+  const service = await createStudioService({
+    ssh: { machines: { getMachines: async () => [] } } as unknown as SshServiceHandle,
+    hosts: { onInvalidate: () => () => {} },
+    local: controller(async () => null),
+    userData: root,
+    build: 'test',
+    expose: () => async () => {},
+    applyServerMode,
+  });
+  const wire = createTestWire(studioControlContract, service.controller);
+  cleanups.push(
+    () => service.dispose(),
+    () => wire.dispose()
+  );
+  await mkdir(path.join(root, 'taixu-studio.json.tmp'));
+  await expect(wire.client.setServerMode({ enabled: true })).rejects.toThrow();
+  expect(await wire.client.status()).toMatchObject({ serverMode: false });
+  expect(applyServerMode).toHaveBeenCalledExactlyOnceWith(false);
+});
 
 it('shares Studio IDs and HTTP, fences identity changes, reconnects, and returns explicitly to local', async () => {
   const root = await folder();

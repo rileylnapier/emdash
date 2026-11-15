@@ -10,12 +10,14 @@ export function UsageOverviewView({
   refreshing,
   error,
   onRefresh,
+  embedded = false,
 }: {
   overview?: UsageOverview;
   loading: boolean;
   refreshing: boolean;
   error?: string;
   onRefresh(): void;
+  embedded?: boolean;
 }) {
   const discovering =
     loading ||
@@ -32,8 +34,12 @@ export function UsageOverviewView({
   );
   const counts = new Map<string, number>();
   return (
-    <div className="space-y-8 pb-4">
-      <PageLayout.Header sticky title="Usage" description="Your subscription limits." />
+    <div className={embedded ? 'space-y-4 pb-4' : 'space-y-8 pb-4'}>
+      {embedded ? (
+        <p className="text-sm text-foreground-muted">Your subscription limits.</p>
+      ) : (
+        <PageLayout.Header sticky title="Usage" description="Your subscription limits." />
+      )}
       {(error ?? overview?.error) && (
         <p role="alert" className="text-sm text-foreground-destructive">
           {error ?? overview?.error}

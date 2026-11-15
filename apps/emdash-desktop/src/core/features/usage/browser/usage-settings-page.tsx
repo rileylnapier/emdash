@@ -14,6 +14,10 @@ function getModel() {
 }
 
 export function UsageSettingsPage() {
+  return <UsageOverview />;
+}
+
+export function UsageOverview({ embedded = false }: { embedded?: boolean }) {
   const state = useRemoteModelState(usageContract.overview, getModel, undefined, 'current');
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string>();
@@ -31,6 +35,7 @@ export function UsageSettingsPage() {
   };
   return (
     <UsageOverviewView
+      embedded={embedded}
       overview={state.value}
       loading={state.isLoading}
       refreshing={refreshing}

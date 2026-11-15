@@ -148,6 +148,155 @@
 .taixu-error span {
   flex: 1;
 }
+.taixu-server {
+  box-sizing: border-box;
+  height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 24px;
+  font:
+    13px/1.5 system-ui,
+    sans-serif;
+}
+.taixu-server-heading {
+  flex-shrink: 0;
+  margin-bottom: 12px;
+}
+.taixu-server-heading h1 {
+  margin: 4px 0 8px;
+  font:
+    34px Georgia,
+    serif;
+}
+.taixu-server-status-panel > p,
+.taixu-server-footer p {
+  margin: 0;
+  color: #efe6d299;
+}
+.taixu-server-eyebrow {
+  color: #c9a24b;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  font-size: 10px;
+}
+.taixu-server-tabs {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.taixu-server .taixu-server-tab-list {
+  flex-shrink: 0;
+  gap: 16px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid #c9a24b25;
+}
+.taixu-server-tab-list [role='tab'] {
+  padding: 8px 0;
+  border-radius: 0;
+  border-bottom: 2px solid transparent;
+  color: #efe6d299;
+}
+.taixu-server-tab-list [role='tab'][aria-selected='true'] {
+  color: #c9a24b;
+  border-bottom-color: #c9a24b;
+}
+.taixu-server-status-panel,
+.taixu-server-usage {
+  min-height: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+.taixu-server-status {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid #c9a24b30;
+  border-radius: 10px;
+  background: #181e32;
+}
+.taixu-server-status-panel dt {
+  color: #efe6d299;
+  font-size: 12px;
+}
+.taixu-server-status-panel dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+.taixu-server-status dd[data-state='ready'] {
+  color: #a6c39e;
+}
+.taixu-server-details {
+  margin: 12px 0;
+}
+.taixu-server-details > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 5px 0;
+}
+.taixu-server-details dd {
+  font:
+    12px ui-monospace,
+    monospace;
+  text-align: right;
+}
+.taixu-server-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.taixu-server-tools button,
+.taixu-server-open {
+  color: inherit;
+  background: transparent;
+  border: 1px solid #c9a24b45;
+  border-radius: 6px;
+  padding: 7px 12px;
+  font: inherit;
+  cursor: pointer;
+}
+.taixu-server-tools button:hover,
+.taixu-server-open:hover {
+  background: #efe6d210;
+}
+.taixu-server-tools button:focus-visible,
+.taixu-server-open:focus-visible {
+  outline: 2px solid #c9a24b;
+  outline-offset: 2px;
+}
+.taixu-server-tools button:disabled,
+.taixu-server-open:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.taixu-server-footer {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 20px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid #c9a24b25;
+}
+.taixu-server-footer p {
+  font-size: 12px;
+}
+.taixu-server .taixu-server-open {
+  flex-shrink: 0;
+  background: #c9a24b;
+  color: #0e1328;
+}
+.taixu-server .taixu-server-error {
+  flex-shrink: 0;
+  color: #f1b0a0;
+  margin: 12px 0 0;
+}
 @media (max-width: 900px) {
   .taixu-titlebar {
     gap: 12px;
@@ -158,4 +307,110 @@
   .taixu-titlebar button {
     padding: 6px;
   }
+}
+
+.taixu-apps-page {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  background: #0e1328;
+  color: #efe6d2;
+  padding: 28px;
+}
+.taixu-apps-page > section {
+  max-width: 720px;
+  margin: 0 auto;
+}
+.taixu-server-apps {
+  min-height: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+.taixu-apps {
+  font-size: 13px;
+}
+.taixu-apps-heading,
+.taixu-app-card-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.taixu-apps h2 {
+  margin: 0;
+  font:
+    28px Georgia,
+    serif;
+}
+.taixu-apps-heading p {
+  margin: 5px 0 0;
+  color: #c9a24b;
+}
+.taixu-apps-intro,
+.taixu-apps-note {
+  color: #efe6d299;
+  line-height: 1.6;
+}
+.taixu-apps-note {
+  font-size: 12px;
+}
+.taixu-app-card {
+  padding: 16px;
+  margin: 12px 0;
+  border: 1px solid #c9a24b30;
+  border-radius: 10px;
+  background: #181e32;
+}
+.taixu-app-card h3 {
+  margin: 0;
+  font-size: 16px;
+}
+.taixu-app-card p {
+  margin: 8px 0 0;
+  line-height: 1.5;
+}
+.taixu-app-card-heading span {
+  font-size: 11px;
+  color: #efe6d299;
+}
+.taixu-app-card-heading span[data-state='running'] {
+  color: #a6c39e;
+}
+.taixu-app-meta {
+  color: #efe6d299;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.taixu-app-blockers {
+  color: #dcc18a;
+  font-size: 12px;
+}
+.taixu-app-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.taixu-apps button {
+  padding: 7px 10px;
+  background: transparent;
+  color: inherit;
+  border: 1px solid #c9a24b45;
+  border-radius: 6px;
+  font: inherit;
+  cursor: pointer;
+}
+.taixu-apps button:hover {
+  background: #efe6d210;
+}
+.taixu-apps button:focus-visible {
+  outline: 2px solid #c9a24b;
+  outline-offset: 2px;
+}
+.taixu-apps button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.taixu-apps .taixu-server-error {
+  color: #f1b0a0;
 }
