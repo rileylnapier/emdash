@@ -102,6 +102,8 @@ it.each(['idle', 'completed'])(
 it.each([
   ['working', { ...completed, status: 'working' }],
   ['permission', { ...completed, status: 'awaiting-input', notificationType: 'permission_prompt' }],
+  ['question', { ...completed, status: 'awaiting-input', notificationType: 'elicitation_dialog' }],
+  ['unknown notification', { ...completed, status: 'awaiting-input' }],
   ['notification', { ...completed, status: 'idle', notificationType: 'auth_success' }],
   ['error', { ...completed, status: 'error' }],
   ['input inference', { ...completed, source: 'input' }],
@@ -202,6 +204,23 @@ it('rechecks provider activity on every call, including after prepare', async ()
   await expect(assertUpdateActivityIdle(runtime, hosts)).resolves.toBeUndefined();
   activity.agents['task-1'].status = 'working';
   await expect(assertUpdateActivityIdle(runtime, hosts)).rejects.toThrow(/taixu-updates/);
+});
+
+it('allows Claude completion reminders but refuses input typed after preparation', async () => {
+  const activity = {
+    tui: { 'task-1': { ...session, providerId: 'claude' } },
+    agents: {
+      'task-1': {
+        ...completed,
+        providerId: 'claude',
+        message: 'Claude is waiting for your input',
+      },
+    },
+  };
+  const runtime = broker(null, {}, activity);
+  await expect(assertUpdateActivityIdle(runtime, hosts)).resolves.toBeUndefined();
+  activity.tui['task-1'].lastInputAt = 301;
+  await expect(assertUpdateActivityIdle(runtime, hosts)).rejects.toThrow(/claude · taixu-updates/);
 });
 
 it('refuses a host with unavailable agent state even if its processes appear idle', async () => {

@@ -178,3 +178,11 @@ remain mandatory. macOS `lipo` expects the executable before `-verify_arch`.
 Focused coverage: Taixu `update-coordinator`, `update-host`, `update-guard`, `update-activity`,
 `update-files` and `studio` node tests; shutdown `index` tests; headless `taixu-updates` and
 `studio-startup` browser tests. These use isolated fixtures and no paid model calls.
+
+Claude's `idle_prompt` notification confirms that a turn finished and it is waiting for
+the next message. The provider normalizes it to completion, so an idle conversation may
+remain open during an update. Explicit notification types take priority over the narrow
+legacy message fallback; permission, elicitation and unknown notifications remain blockers.
+Repeated live hooks refresh activity timestamps without repeating desktop notifications.
+Restored state never gains a new timestamp. Input newer than completion still blocks the
+restart, including at the commit-time recheck.

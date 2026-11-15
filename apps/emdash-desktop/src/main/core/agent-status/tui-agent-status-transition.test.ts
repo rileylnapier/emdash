@@ -60,4 +60,18 @@ describe('TUI agent status transition mapping', () => {
       shouldApplyAgentStateTransition(state({ status: 'working' }), state({ status: 'completed' }))
     ).toBe(true);
   });
+
+  it('does not notify again when an idle reminder refreshes completion evidence', () => {
+    expect(
+      shouldApplyAgentStateTransition(
+        state({ providerId: 'claude', status: 'completed' }),
+        state({
+          providerId: 'claude',
+          status: 'completed',
+          updatedAt: 300,
+          message: 'Claude is waiting for your input',
+        })
+      )
+    ).toBe(false);
+  });
 });

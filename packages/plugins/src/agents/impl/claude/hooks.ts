@@ -11,11 +11,6 @@ import {
 export const CLAUDE_SETTINGS_PATH = 'settings.json';
 
 /**
- * Claude's Notification events carry no `notification_type` field.
- * Classify by examining the message text:
- *   /permission|approval/i → permission_prompt
- *   everything else        → idle_prompt (agent waiting / done)
- *
  * Every Claude hook payload includes `session_id`, and it changes when the user
  * switches sessions inside the TUI (`/resume`). Status events carry it so the
  * runtime resumes the session Claude is actually in, not the one it launched with.
@@ -35,16 +30,25 @@ function parseClaudeHookEvent(
 
 function parseClaudeNotification(body: Record<string, unknown>): CanonicalHookEvent {
   const message = typeof body.message === 'string' ? body.message : '';
-  const notificationType = /permission|approval/i.test(message)
-    ? ('permission_prompt' as const)
-    : ('idle_prompt' as const);
-  return {
-    kind: 'status',
-    type: 'notification',
-    notificationType,
-    message: message || undefined,
-    title: typeof body.title === 'string' ? body.title : undefined,
-  };
+  // Current Claude supplies notification_type. Keep the narrow text fallback
+  // for older versions, but never use it to reinterpret a new/unknown type.
+  const legacyType = /permission|approval/i.test(message)
+    ? 'permission_prompt'
+    : /^Claude is waiting for your input\.?$/i.test(message.trim())
+      ? 'idle_prompt'
+      : undefined;
+  const payload =
+    Object.hasOwn(body, 'notification_type') || Object.hasOwn(body, 'notificationType')
+      ? body
+      : { ...body, notification_type: legacyType };
+  const event = defaultHookEventParser('notification', payload);
+  if (event.kind !== 'status' || event.notificationType !== 'idle_prompt') return event;
+
+  // Claude emits this reminder after finishing a turn, while waiting for the
+  // next message. It confirms completion, not a permission or elicitation request.
+  // Use the same state as Stop so a reminder does not reopen attention or emit
+  // a second completion notification for an already completed turn.
+  return defaultHookEventParser('stop', body);
 }
 
 export function buildClaudeHookConfig() {

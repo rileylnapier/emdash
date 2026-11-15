@@ -45,7 +45,7 @@ describe('claude hooks', () => {
     });
   });
 
-  it('keeps notification classification and adds the session id', () => {
+  it('recognizes an older Claude idle reminder and adds the session id', () => {
     expect(
       parse('notification', {
         session_id: RESUMED_SESSION_ID,
@@ -54,10 +54,57 @@ describe('claude hooks', () => {
       })
     ).toEqual({
       kind: 'status',
-      type: 'notification',
-      notificationType: 'idle_prompt',
+      type: 'stop',
       message: 'Claude is waiting for your input',
       providerSessionId: RESUMED_SESSION_ID,
+    });
+  });
+
+  it('treats an explicit idle reminder as completion regardless of its wording', () => {
+    expect(
+      parse('notification', {
+        notification_type: 'idle_prompt',
+        message: 'Waiting for another message',
+        session_id: RESUMED_SESSION_ID,
+      })
+    ).toMatchObject({
+      kind: 'status',
+      type: 'stop',
+      providerSessionId: RESUMED_SESSION_ID,
+    });
+  });
+
+  it.each(['permission_prompt', 'elicitation_dialog', 'auth_success'])(
+    'honors the explicit %s type over legacy idle wording',
+    (notificationType) => {
+      expect(
+        parse('notification', {
+          notification_type: notificationType,
+          message: 'Claude is waiting for your input',
+        })
+      ).toMatchObject({ kind: 'status', type: 'notification', notificationType });
+    }
+  );
+
+  it('still recognizes legacy permission messages', () => {
+    expect(parse('notification', { message: 'Claude needs your approval' })).toMatchObject({
+      kind: 'status',
+      type: 'notification',
+      notificationType: 'permission_prompt',
+    });
+  });
+
+  it.each([
+    {},
+    { message: 'Please answer a question' },
+    { notification_type: 'future_prompt', message: 'Claude is waiting for your input' },
+    { notificationType: 'future_prompt', message: 'Claude is waiting for your input' },
+    { notification_type: null, message: 'Claude is waiting for your input' },
+  ])('does not mistake an unknown notification for completion: %j', (body) => {
+    expect(parse('notification', body)).toMatchObject({
+      kind: 'status',
+      type: 'notification',
+      notificationType: undefined,
     });
   });
 
