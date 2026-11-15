@@ -3,8 +3,8 @@ import type { AppAction, AppsStatus } from '../api/apps-contract';
 import { getTaixuClient } from '../api/browser/client';
 
 const labels = {
-  running: 'Sharing library',
-  idle: 'Sharing off',
+  running: 'Service running',
+  idle: 'Needs attention',
   stopped: 'Stopped',
   'needs-install': 'Update required',
   planned: 'Coming later',
@@ -99,8 +99,8 @@ export function AppsPanel() {
         </button>
       </div>
       <p className="taixu-apps-intro">
-        Keep services running here while you use the apps on your laptop. They keep running when you
-        close Taixu.
+        Run apps on this computer without keeping their windows open. Services keep running when you
+        close Taixu. Laptop access depends on each app.
       </p>
       {(error || readError) && (
         <p className="taixu-server-error" role="alert">
@@ -110,11 +110,22 @@ export function AppsPanel() {
       {status?.apps.map((app) => {
         const available = ['running', 'idle', 'stopped'].includes(app.state);
         const active = app.state === 'running' || app.state === 'idle';
+        const stateLabel =
+          app.id === 'flow' && active
+            ? app.state === 'running'
+              ? 'Sharing library'
+              : 'Sharing off'
+            : labels[app.state];
+        const startLabel = active
+          ? app.id === 'flow'
+            ? 'Enable sharing'
+            : 'Check service'
+          : 'Start service';
         return (
           <article className="taixu-app-card" key={app.id} aria-label={app.name}>
             <div className="taixu-app-card-heading">
               <h3>{app.name}</h3>
-              <span data-state={app.state}>{busy === app.id ? 'Working…' : labels[app.state]}</span>
+              <span data-state={app.state}>{busy === app.id ? 'Working…' : stateLabel}</span>
             </div>
             <p>{app.detail}</p>
             {active && (
@@ -138,7 +149,7 @@ export function AppsPanel() {
                     disabled={!!busy}
                     onClick={() => void act({ appId: app.id, action: 'start' })}
                   >
-                    {active ? 'Enable sharing' : 'Start service'}
+                    {startLabel}
                   </button>
                 )}
                 <button
