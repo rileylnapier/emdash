@@ -308,3 +308,109 @@
     padding: 6px;
   }
 }
+
+.taixu-apps-page {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  background: #0e1328;
+  color: #efe6d2;
+  padding: 28px;
+}
+.taixu-apps-page > section {
+  max-width: 720px;
+  margin: 0 auto;
+}
+.taixu-server-apps {
+  min-height: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+.taixu-apps {
+  font-size: 13px;
+}
+.taixu-apps-heading,
+.taixu-app-card-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.taixu-apps h2 {
+  margin: 0;
+  font:
+    28px Georgia,
+    serif;
+}
+.taixu-apps-heading p {
+  margin: 5px 0 0;
+  color: #c9a24b;
+}
+.taixu-apps-intro,
+.taixu-apps-note {
+  color: #efe6d299;
+  line-height: 1.6;
+}
+.taixu-apps-note {
+  font-size: 12px;
+}
+.taixu-app-card {
+  padding: 16px;
+  margin: 12px 0;
+  border: 1px solid #c9a24b30;
+  border-radius: 10px;
+  background: #181e32;
+}
+.taixu-app-card h3 {
+  margin: 0;
+  font-size: 16px;
+}
+.taixu-app-card p {
+  margin: 8px 0 0;
+  line-height: 1.5;
+}
+.taixu-app-card-heading span {
+  font-size: 11px;
+  color: #efe6d299;
+}
+.taixu-app-card-heading span[data-state='running'] {
+  color: #a6c39e;
+}
+.taixu-app-meta {
+  color: #efe6d299;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.taixu-app-blockers {
+  color: #dcc18a;
+  font-size: 12px;
+}
+.taixu-app-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.taixu-apps button {
+  padding: 7px 10px;
+  background: transparent;
+  color: inherit;
+  border: 1px solid #c9a24b45;
+  border-radius: 6px;
+  font: inherit;
+  cursor: pointer;
+}
+.taixu-apps button:hover {
+  background: #efe6d210;
+}
+.taixu-apps button:focus-visible {
+  outline: 2px solid #c9a24b;
+  outline-offset: 2px;
+}
+.taixu-apps button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.taixu-apps .taixu-server-error {
+  color: #f1b0a0;
+}

@@ -9,6 +9,7 @@ import { getTaixuClient } from '../api/browser/client';
 import { getStudioClient } from '../api/browser/studio-client';
 import { workOriginSchema, type WorkOrigin } from '../api/contract';
 import './taixu-shell.css';
+import { AppsPanel } from './apps-panel';
 import { ServerMode } from './server-mode';
 import { StudioSelector } from './studio-selector';
 import { UpdateButton } from './update-button';
@@ -32,6 +33,7 @@ export function TaixuShell({
   // Resolve the local preference before mounting WebGL, including on app restart.
   const [serverMode, setServerMode] = useState<boolean | null>(null);
   const [modeBusy, setModeBusy] = useState(false);
+  const [appsOpen, setAppsOpen] = useState(false);
   const loadMode = useCallback(async () => {
     try {
       const status = await (await getStudioClient()).status();
@@ -45,6 +47,7 @@ export function TaixuShell({
   }, [loadMode]);
   const inspect = useCallback(
     (value: boolean) => {
+      setAppsOpen(false);
       if (value) setHasInspected(true);
       onInspect(value);
     },
@@ -297,6 +300,15 @@ export function TaixuShell({
           {serverMode !== true && (
             <>
               <button
+                aria-pressed={appsOpen}
+                onClick={() => {
+                  onInspect(false);
+                  setAppsOpen(!appsOpen);
+                }}
+              >
+                {appsOpen ? 'Back to Taixu' : 'Apps'}
+              </button>
+              <button
                 onClick={() => {
                   getNavigation().navigate(settingsViewDef({ tab: 'clis-models' }));
                   inspect(true);
@@ -332,7 +344,11 @@ export function TaixuShell({
           }
         />
       ) : (
-        <main className="taixu-world" hidden={inspecting} inert={inspecting}>
+        <main
+          className="taixu-world"
+          hidden={inspecting || appsOpen}
+          inert={inspecting || appsOpen}
+        >
           {url && serverMode === false ? (
             <iframe
               ref={frame}
@@ -361,11 +377,16 @@ export function TaixuShell({
           )}
         </main>
       )}
+      {appsOpen && serverMode === false && (
+        <main className="taixu-apps-page">
+          <AppsPanel />
+        </main>
+      )}
       {(hasInspected || inspecting) && (
         <div
           className="taixu-workbench"
-          hidden={!inspecting || serverMode === true}
-          inert={!inspecting || serverMode === true}
+          hidden={!inspecting || serverMode === true || appsOpen}
+          inert={!inspecting || serverMode === true || appsOpen}
         >
           {workbench}
         </div>

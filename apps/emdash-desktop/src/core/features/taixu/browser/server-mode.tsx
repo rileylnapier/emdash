@@ -4,6 +4,7 @@ import { UsageOverviewPanel } from '@core/features/usage/contributions/overview-
 import { getTaixuClient } from '../api/browser/client';
 import { getStudioClient } from '../api/browser/studio-client';
 import type { StudioStatus } from '../api/studio-contract';
+import { AppsPanel } from './apps-panel';
 
 export function ServerMode({
   url,
@@ -91,6 +92,7 @@ export function ServerMode({
       <Tabs.Root defaultValue="status" className="taixu-server-tabs">
         <Tabs.List aria-label="Server information" className="taixu-server-tab-list">
           <Tabs.Tab value="status">Status</Tabs.Tab>
+          <Tabs.Tab value="apps">Apps</Tabs.Tab>
           <Tabs.Tab value="usage">Usage</Tabs.Tab>
         </Tabs.List>
         <Tabs.Panel value="status" className="taixu-server-status-panel">
@@ -170,6 +172,9 @@ export function ServerMode({
         </Tabs.Panel>
         <Tabs.Panel value="usage" className="taixu-server-usage">
           <UsageOverviewPanel />
+        </Tabs.Panel>
+        <Tabs.Panel value="apps" className="taixu-server-apps">
+          <AppsPanel />
         </Tabs.Panel>
       </Tabs.Root>
       {(error || checkError || actionError) && (

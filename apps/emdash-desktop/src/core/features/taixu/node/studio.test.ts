@@ -140,6 +140,12 @@ it('keeps window controls local and task calls remote without fallback', async (
   const wire = await peerForController(routed);
   expect(await wire.call('host.quit', undefined)).toBe('local');
   expect(await wire.call('tasks.getTasks', undefined)).toBe('studio');
+  expect(await wire.call('taixu.apps', {})).toBe('studio');
+  expect(await wire.call('taixu.appAction', { appId: 'flow', action: 'start' })).toBe('studio');
+  remote.mockRejectedValueOnce(new Error('disconnected'));
+  await expect(wire.call('taixu.appAction', { appId: 'flow', action: 'stop' })).rejects.toThrow(
+    /disconnected/
+  );
   await expect(wire.call('host.openDirectory', undefined)).rejects.toThrow(/Studio window/);
   remote.mockRejectedValueOnce(new Error('disconnected'));
   await expect(wire.call('tasks.create', {})).rejects.toThrow(/disconnected/);

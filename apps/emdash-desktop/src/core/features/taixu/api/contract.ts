@@ -1,6 +1,7 @@
 import { pullRequestSchema } from '@emdash/plugins/pull-requests/schemas';
 import { defineContract, procedure } from '@emdash/wire/rpc';
 import { z } from 'zod';
+import { appActionSchema, appsStatusSchema } from './apps-contract';
 
 export const taixuDomain = 'taixu' as const;
 export const workOriginSchema = z.object({
@@ -77,6 +78,8 @@ export const archiveResultSchema = z.object({
 export type WorkArchiveResult = z.infer<typeof archiveResultSchema>;
 export type WorkArchiveInput = z.infer<typeof archiveInputSchema>;
 export const taixuContract = defineContract({
+  apps: procedure({ input: z.object({}), output: appsStatusSchema }),
+  appAction: procedure({ input: appActionSchema, output: appsStatusSchema, callTimeoutMs: 90000 }),
   archiveWork: procedure({
     input: archiveInputSchema,
     output: archiveResultSchema,

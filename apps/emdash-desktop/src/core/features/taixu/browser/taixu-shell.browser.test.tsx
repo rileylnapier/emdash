@@ -7,6 +7,8 @@ import { TaixuShell } from './taixu-shell';
 import '@emdash/ui/style.css';
 
 const mocks = vi.hoisted(() => ({
+  apps: vi.fn(),
+  appAction: vi.fn(),
   connect: vi.fn(),
   taskExists: vi.fn(async () => true),
   navigate: vi.fn(),
@@ -21,6 +23,8 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock('../api/browser/client', () => ({
   getTaixuClient: async () => ({
+    apps: mocks.apps,
+    appAction: mocks.appAction,
     connect: mocks.connect,
     taskExists: mocks.taskExists,
     status: mocks.status,
@@ -60,6 +64,17 @@ vi.mock('@core/features/agents/contributions/browser/agent-icon', () => ({
 
 let host: HTMLDivElement;
 let root: Root;
+const flowApp = {
+  id: 'flow',
+  name: 'Flow',
+  detail: 'Browse and play the Studio library from your laptop.',
+  supported: true,
+  state: 'stopped',
+  endpoint: null,
+  windowOpen: false,
+  blockers: [],
+  version: '1.0.0',
+};
 const studio = {
   selected: null,
   name: null,
@@ -81,6 +96,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.connect.mockResolvedValue({ url: `${location.origin}/?taixu-test`, error: null });
   mocks.status.mockResolvedValue({ running: true });
+  mocks.apps.mockResolvedValue({ computer: 'Studio', apps: [flowApp] });
+  mocks.appAction.mockResolvedValue({ computer: 'Studio', apps: [flowApp] });
   mocks.studioStatus.mockResolvedValue({ ...studio });
   mocks.setServerMode.mockResolvedValue(undefined);
   mocks.share.mockResolvedValue({ ...studio });
@@ -356,5 +373,86 @@ it('fits server mode in its compact window', async () => {
   expect(main.scrollWidth).toBeLessThanOrEqual(main.clientWidth);
   expect(open.getBoundingClientRect().bottom).toBeLessThanOrEqual(500);
   expect(host.querySelector('iframe')).toBeNull();
+  await page.viewport(1280, 720);
+});
+
+it('controls apps on the selected computer and preserves action failures without stale controls', async () => {
+  await mount();
+  await click('Apps');
+  expect(host.textContent).toContain('On Studio');
+  expect(host.querySelector('.taixu-world')?.hasAttribute('hidden')).toBe(true);
+  mocks.appAction.mockRejectedValueOnce(new Error('Action was not confirmed. Refresh.'));
+  await click('Start service');
+  expect(mocks.appAction).toHaveBeenCalledExactlyOnceWith({ appId: 'flow', action: 'start' });
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain('not confirmed');
+  mocks.apps.mockRejectedValueOnce(new Error('offline'));
+  await click('Refresh');
+  expect(host.querySelector('.taixu-app-actions')).toBeNull();
+  expect(host.textContent).toContain('Selected computer unavailable');
+  await click('Refresh');
+  expect(host.querySelector('[role="alert"]')).toBeNull();
+  expect(host.textContent).toContain('Start service');
+  if (import.meta.env.VITE_TAIXU_APPS_FULL_SCREENSHOT)
+    await page.screenshot({ path: import.meta.env.VITE_TAIXU_APPS_FULL_SCREENSHOT });
+  await click('Inspect work');
+  expect(host.querySelector('.taixu-apps-page')).toBeNull();
+});
+
+it('shows the same Apps panel in compact server mode and disables stopping occupied Flow', async () => {
+  await page.viewport(520, 620);
+  mocks.studioStatus.mockResolvedValue({ ...studio, serverMode: true });
+  mocks.apps.mockResolvedValue({
+    computer: 'Studio',
+    apps: [
+      {
+        ...flowApp,
+        state: 'running',
+        windowOpen: true,
+        endpoint: 'http://127.0.0.1:47833',
+        blockers: ['Close Flow’s windows before stopping its service.'],
+      },
+      {
+        ...flowApp,
+        id: 'bloom',
+        name: 'Bloom',
+        state: 'planned',
+        supported: false,
+        detail: 'Remote rendering is the next service to add.',
+        version: null,
+      },
+      {
+        ...flowApp,
+        id: 'taste',
+        name: 'Taste',
+        state: 'planned',
+        supported: false,
+        detail: 'Search and downloads currently run on each Mac.',
+        version: null,
+      },
+      {
+        ...flowApp,
+        id: 'jam',
+        name: 'Jam',
+        state: 'planned',
+        supported: false,
+        detail: 'The music library currently runs on each Mac.',
+        version: null,
+      },
+    ],
+  });
+  await mount();
+  await click('Apps');
+  expect(host.querySelector('iframe')).toBeNull();
+  const stop = [...host.querySelectorAll('button')].find((b) => b.textContent === 'Stop service')!;
+  expect(stop.disabled).toBe(true);
+  expect(host.querySelector('[aria-label="Bloom"] button')).toBeNull();
+  const panel = host.querySelector<HTMLElement>('.taixu-server-apps')!;
+  expect(panel.scrollWidth).toBeLessThanOrEqual(panel.clientWidth);
+  if (import.meta.env.VITE_TAIXU_APPS_SCREENSHOT)
+    await page.screenshot({ path: import.meta.env.VITE_TAIXU_APPS_SCREENSHOT });
+  await click('Open on Studio');
+  expect(mocks.appAction).toHaveBeenCalledExactlyOnceWith({ appId: 'flow', action: 'open' });
+  await click('Usage');
+  await expect.poll(() => !!host.querySelector('.taixu-apps')?.checkVisibility()).toBe(false);
   await page.viewport(1280, 720);
 });
