@@ -5,6 +5,7 @@ import { getTaixuClient } from '../api/browser/client';
 import { getStudioClient } from '../api/browser/studio-client';
 import type { StudioStatus } from '../api/studio-contract';
 import { AppsPanel } from './apps-panel';
+import { UpdateBadge } from './update-card';
 
 export function ServerMode({
   url,
@@ -98,7 +99,10 @@ export function ServerMode({
       <Tabs.Root defaultValue="status" className="taixu-server-tabs">
         <Tabs.List aria-label="Server information" className="taixu-server-tab-list">
           <Tabs.Tab value="status">Status</Tabs.Tab>
-          <Tabs.Tab value="apps">Apps</Tabs.Tab>
+          <Tabs.Tab value="apps">
+            Apps
+            <UpdateBadge />
+          </Tabs.Tab>
           <Tabs.Tab value="usage">Usage</Tabs.Tab>
         </Tabs.List>
         <Tabs.Panel value="status" className="taixu-server-status-panel">

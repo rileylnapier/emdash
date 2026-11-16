@@ -58,6 +58,43 @@
   opacity: 0.5;
   cursor: default;
 }
+.taixu-update-actions {
+  display: flex;
+  flex-wrap: wrap;
+}
+/* Shown inside the Apps page's Taixu card. */
+.taixu-update-panel.taixu-update-inline {
+  position: static;
+  z-index: auto;
+  width: auto;
+  max-height: none;
+  overflow: visible;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+.taixu-update-inline p {
+  font: inherit;
+  line-height: 1.5;
+  margin: 8px 0 0;
+}
+.taixu-update-inline .taixu-update-versions,
+.taixu-update-inline .taixu-update-explanation {
+  color: #efe6d299;
+  font-size: 12px;
+}
+.taixu-update-inline .taixu-update-actions {
+  gap: 8px;
+  margin-top: 12px;
+}
+.taixu-update-inline .taixu-update-actions button {
+  margin: 0;
+}
+.taixu-update-inline .taixu-update-primary {
+  border-color: #c9a24b;
+}
 #taixu-connection-gate .taixu-update-panel {
   position: static;
   margin-top: 12px;

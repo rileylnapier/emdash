@@ -3,7 +3,8 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type { AppsStatus } from '../api/apps-contract';
-import { resetBothMacsForTests, updateBothMacs } from './apps-both-macs';
+import type { TaixuUpdateState } from '../api/update-contract';
+import { resetBothMacsForTests, updateBothMacs, type TaixuUpdater } from './apps-both-macs';
 import { AppsPanel } from './apps-panel';
 import '@emdash/ui/style.css';
 import './taixu-shell.css';
@@ -15,6 +16,42 @@ const mocks = vi.hoisted(() => ({
   localAppAction: vi.fn(),
 }));
 vi.mock('../api/browser/client', () => ({ getTaixuClient: async () => mocks }));
+const taixu = vi.hoisted(() => ({
+  updateStatus: vi.fn(),
+  checkUpdate: vi.fn(),
+  installUpdate: vi.fn(),
+  acknowledgeUpdate: vi.fn(),
+}));
+vi.mock('../api/browser/studio-client', () => ({ getStudioClient: async () => taixu }));
+const current: TaixuUpdateState = {
+  status: 'idle',
+  hold: null,
+  current: 'a'.repeat(64),
+  currentVersion: '1.9.0',
+  release: null,
+  progress: 0,
+  message: 'Taixu is current.',
+  remote: false,
+};
+const release = {
+  protocol: 1 as const,
+  build: 'b'.repeat(64),
+  version: '1.10.0',
+  createdAt: new Date().toISOString(),
+  arch: 'arm64' as const,
+  size: 1000,
+  sha256: 'c'.repeat(64),
+  notes: 'Taixu now lives on the Apps page.',
+};
+const ready: TaixuUpdateState = {
+  ...current,
+  status: 'ready',
+  release,
+  progress: 100,
+  remote: true,
+  target: 'both',
+  message: 'Update ready for Studio and this Mac.',
+};
 let root: Root;
 let container: HTMLDivElement;
 const status: AppsStatus = {
@@ -38,6 +75,9 @@ beforeEach(() => {
   mocks.appAction.mockResolvedValue(undefined);
   mocks.localApps.mockRejectedValue(new Error('not available'));
   mocks.localAppAction.mockResolvedValue(undefined);
+  taixu.updateStatus.mockResolvedValue(current);
+  taixu.checkUpdate.mockResolvedValue({ ...current, status: 'checking' });
+  taixu.acknowledgeUpdate.mockResolvedValue(undefined);
   container = document.createElement('div');
   document.body.append(container);
   root = createRoot(container);
@@ -61,7 +101,8 @@ async function render() {
 it('shows all six services and reserves sharing labels for Flow', async () => {
   await render();
   await expect.element(page.getByText('Sharing library', { exact: true })).toBeVisible();
-  expect(container.querySelectorAll('article')).toHaveLength(6);
+  // Six services plus Taixu itself.
+  expect(container.querySelectorAll('article')).toHaveLength(7);
   expect(
     [...container.querySelectorAll('[data-state]')].filter(
       (el) => el.textContent === 'Service running'
@@ -103,7 +144,10 @@ it('removes stale actions if the selected computer disconnects', async () => {
   mocks.apps.mockRejectedValue(Error('Disconnected'));
   await page.getByRole('button', { name: 'Refresh', exact: true }).click();
   await expect.element(page.getByRole('alert')).toHaveTextContent('App status is unavailable');
-  expect(container.querySelectorAll('article')).toHaveLength(0);
+  // Taixu's own card stays: its updates do not depend on the selected computer's apps.
+  expect(
+    [...container.querySelectorAll('article')].map((a) => a.getAttribute('aria-label'))
+  ).toEqual(['Taixu']);
   expect(mocks.appAction).not.toHaveBeenCalled();
 });
 
@@ -351,6 +395,46 @@ it('shows one computer when this Mac is the selected one', async () => {
   expect(mocks.appAction).toHaveBeenCalledExactlyOnceWith({ action: 'update-all' });
 });
 
+it('shows Taixu’s own update card first and installs through the window’s update control', async () => {
+  const laptop = structuredClone(status);
+  laptop.computer = 'Laptop';
+  mocks.localApps.mockResolvedValue(laptop);
+  taixu.updateStatus.mockResolvedValue(ready);
+  taixu.installUpdate.mockResolvedValue({
+    ...ready,
+    status: 'preparing',
+    message: 'Checking which computers need updating…',
+  });
+  await render();
+  const card = page.getByRole('article', { name: 'Taixu', exact: true });
+  await expect
+    .element(card.getByText('Installed Taixu 1.9.0 on this Mac · Release 1.10.0', { exact: true }))
+    .toBeVisible();
+  await expect.element(card.getByText(release.notes, { exact: true })).toBeVisible();
+  await expect.element(card.getByText('Update ready', { exact: true })).toBeVisible();
+  // Above Update everything and every app card, with nothing to close.
+  expect(container.querySelector('article')?.getAttribute('aria-label')).toBe('Taixu');
+  expect(
+    container
+      .querySelector('article')!
+      .compareDocumentPosition(container.querySelector('.taixu-apps-update-both')!) &
+      Node.DOCUMENT_POSITION_FOLLOWING
+  ).toBeTruthy();
+  expect(card.getByRole('button', { name: 'Close' }).elements()).toHaveLength(0);
+  expect(document.querySelectorAll('.taixu-update-panel')).toHaveLength(1);
+  if (import.meta.env.VITE_TAIXU_APPS_TAIXU_SCREENSHOT) {
+    await page.viewport(900, 1000);
+    await page.screenshot({ path: import.meta.env.VITE_TAIXU_APPS_TAIXU_SCREENSHOT });
+    await page.viewport(1280, 720);
+  }
+  await card.getByRole('button', { name: 'Update both Macs', exact: true }).click();
+  expect(taixu.installUpdate).toHaveBeenCalledOnce();
+  expect(taixu.checkUpdate).not.toHaveBeenCalled();
+  await expect
+    .element(card.getByRole('button', { name: 'Checking readiness…', exact: true }))
+    .toBeDisabled();
+});
+
 it('summarises a finished Update all and labels each app without a computer name on one Mac', async () => {
   const one = structuredClone(status);
   one.updateAll = {
@@ -438,7 +522,8 @@ const job = (running: boolean, startedAt: string): AppsStatus['updateAll'] => ({
   finishedAt: running ? null : startedAt,
   apps: [],
 });
-it('updates apps on Studio first, then this Mac up to Studio’s new versions', async () => {
+it('updates Studio’s apps, then this Mac’s up to Studio’s new versions, then Taixu', async () => {
+  const order: string[] = [];
   const studio = structuredClone(status);
   studio.updateAll = job(false, 'earlier run');
   const studioAfter = structuredClone(status);
@@ -457,21 +542,41 @@ it('updates apps on Studio first, then this Mac up to Studio’s new versions', 
   mocks.appAction.mockImplementation(async () => {
     // Laptop must not start before Studio has finished.
     expect(laptopStarted).toBe(false);
+    order.push('studio apps');
     studioStarted = true;
   });
   mocks.localAppAction.mockImplementation(async () => {
+    order.push('this Mac apps');
     laptopStarted = true;
+  });
+  // The window's one update control downloads, then installs through its normal path.
+  taixu.checkUpdate.mockImplementation(async () => {
+    order.push('taixu check');
+    taixu.updateStatus.mockResolvedValue(ready);
+    return { ...current, status: 'downloading', remote: true, progress: 10 };
+  });
+  taixu.installUpdate.mockImplementation(async () => {
+    order.push('taixu install');
+    return { ...ready, status: 'installing', message: 'Restarting this Mac’s Taixu…' };
   });
   await render();
   await expect
     .element(
-      page.getByText("Studio first, then this Mac up to Studio's versions.", { exact: false })
+      page.getByText("Studio's apps, then this Mac's apps up to Studio's versions, then Taixu.", {
+        exact: true,
+      })
     )
     .toBeVisible();
-  await page.getByRole('button', { name: 'Update apps on both Macs' }).click();
+  await page.getByRole('button', { name: 'Update everything' }).click();
   await expect
-    .element(page.getByText('Both Macs finished. See each app below for what changed.'))
+    .element(page.getByText('Step 3 of 3: updating Taixu on both Macs…', { exact: true }))
     .toBeVisible();
+  await expect
+    .element(page.getByText('Apps finished. Taixu is restarting to finish its update.'), {
+      timeout: 6000,
+    })
+    .toBeVisible();
+  expect(order).toEqual(['studio apps', 'this Mac apps', 'taixu check', 'taixu install']);
   expect(mocks.appAction).toHaveBeenCalledExactlyOnceWith({ action: 'update-all' });
   const local = mocks.localAppAction.mock.calls[0]![0];
   expect(local.action).toBe('update-all');
@@ -479,10 +584,28 @@ it('updates apps on Studio first, then this Mac up to Studio’s new versions', 
   expect(local.ceilings).toContainEqual({ appId: 'wondercraft', version: '0.5.0' });
 });
 
-it('reports where a both-Macs run stopped', async () => {
+function fakeTaixu(states: TaixuUpdateState[]): TaixuUpdater & { calls: string[] } {
+  let state: TaixuUpdateState | undefined = current;
+  const calls: string[] = [];
+  return {
+    calls,
+    state: () => state,
+    check: async () => {
+      calls.push('check');
+      state = states.shift();
+    },
+    install: async () => {
+      calls.push('install');
+      state = states.shift();
+    },
+  };
+}
+it('reports where an Update everything run stopped, without starting later steps', async () => {
   mocks.apps.mockResolvedValue(structuredClone(status));
   mocks.appAction.mockRejectedValue(new Error('Taixu is updating. Try again after it finishes.'));
-  await updateBothMacs(mocks, 1);
+  const updater = fakeTaixu([ready]);
+  await updateBothMacs(mocks, { taixu: updater, pollMs: 1 });
+  expect(updater.calls).toEqual([]);
   const laptop = structuredClone(status);
   laptop.computer = 'Laptop';
   mocks.localApps.mockResolvedValue(laptop);
@@ -491,4 +614,49 @@ it('reports where a both-Macs run stopped', async () => {
     .element(page.getByText('Stopped: Taixu is updating. Try again after it finishes.'))
     .toBeVisible();
   expect(mocks.localAppAction).not.toHaveBeenCalled();
+});
+
+it('reports Taixu as current, updated, blocked with its reason, or stops on its error', async () => {
+  // Each hub's Update all finishes as soon as it starts.
+  let studioRuns = 0;
+  let laptopRuns = 0;
+  mocks.apps.mockImplementation(async () => ({
+    ...structuredClone(status),
+    updateAll: job(false, `studio ${studioRuns}`),
+  }));
+  mocks.appAction.mockImplementation(async () => void studioRuns++);
+  mocks.localApps.mockImplementation(async () => ({
+    ...structuredClone(status),
+    computer: 'Laptop',
+    updateAll: job(false, `laptop ${laptopRuns}`),
+  }));
+  mocks.localAppAction.mockImplementation(async () => void laptopRuns++);
+  await render();
+  const run = async (states: TaixuUpdateState[], timeouts?: { check: number; install: number }) => {
+    resetBothMacsForTests();
+    const updater = fakeTaixu(states);
+    await updateBothMacs(mocks, { taixu: updater, pollMs: 1, timeouts });
+    return updater.calls;
+  };
+  const shows = (text: string) =>
+    expect.element(page.getByText(text, { exact: true })).toBeVisible();
+  expect(await run([current])).toEqual(['check']);
+  await shows('Everything is up to date. See each app below for what changed.');
+  const studioOnly = { ...ready, target: 'studio' as const };
+  const after = { ...current, message: 'Both installations are current.' };
+  expect(await run([studioOnly, after])).toEqual(['check', 'install']);
+  await shows('Everything finished. Taixu: Both installations are current.');
+  const blocked = { ...ready, status: 'blocked' as const, message: 'This Mac: codex is working.' };
+  expect(await run([ready, blocked])).toEqual(['check', 'install']);
+  await shows('Apps finished. Taixu is waiting: This Mac: codex is working.');
+  const error = { ...current, status: 'error' as const, message: 'Studio is unreachable.' };
+  expect(await run([error])).toEqual(['check']);
+  await shows('Stopped: Taixu: Studio is unreachable.');
+  const checking = { ...current, status: 'checking' as const };
+  expect(await run([checking], { check: 5, install: 5 })).toEqual(['check']);
+  await shows(
+    'Stopped: Taixu did not finish checking for an update in time. See the Taixu card above.'
+  );
+  expect(studioRuns).toBe(5);
+  expect(laptopRuns).toBe(5);
 });

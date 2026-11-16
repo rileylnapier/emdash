@@ -449,3 +449,28 @@
 .taixu-apps-update-both p {
   margin: 8px 0 0;
 }
+/* A Taixu update needs a look: shown beside Apps in the title bar and server tabs. */
+.taixu-update-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: #c9a24b;
+  vertical-align: middle;
+}
+.taixu-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+.taixu-update-card .taixu-app-card-heading span[data-state='ready'],
+.taixu-update-card .taixu-app-card-heading span[data-state='blocked'] {
+  color: #c9a24b;
+}

@@ -13,7 +13,7 @@ import './taixu-shell.css';
 import { AppsPanel } from './apps-panel';
 import { ServerMode } from './server-mode';
 import { StudioSelector } from './studio-selector';
-import { UpdateButton } from './update-button';
+import { UpdateBadge, useSharedUpdates } from './update-card';
 
 const heads = ['Product', 'Marketing', 'Design', 'Eng'];
 
@@ -35,6 +35,9 @@ export function TaixuShell({
   const [serverMode, setServerMode] = useState<boolean | null>(null);
   const [modeBusy, setModeBusy] = useState(false);
   const [appsOpen, setAppsOpen] = useState(false);
+  // One update control per window, mounted in every mode so restart holds are
+  // always acknowledged. Apps shows it; nothing else polls.
+  useSharedUpdates();
   const loadMode = useCallback(async () => {
     try {
       const status = await (await getStudioClient()).status();
@@ -335,7 +338,6 @@ export function TaixuShell({
           </>
         )}
         <div className="taixu-actions">
-          <UpdateButton />
           {serverMode !== true && (
             <>
               <button
@@ -345,7 +347,14 @@ export function TaixuShell({
                   setAppsOpen(!appsOpen);
                 }}
               >
-                {appsOpen ? 'Back to Taixu' : 'Apps'}
+                {appsOpen ? (
+                  'Back to Taixu'
+                ) : (
+                  <>
+                    Apps
+                    <UpdateBadge />
+                  </>
+                )}
               </button>
               <button
                 onClick={() => {

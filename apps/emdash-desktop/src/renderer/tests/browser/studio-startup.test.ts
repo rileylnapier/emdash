@@ -40,6 +40,10 @@ it('makes recovery clickable above the startup splash before initializing deskto
   const startup = seedDesktopWire();
   const reconnect = page.getByRole('button', { name: 'Reconnect to Studio', exact: true });
   await expect.element(reconnect).toBeVisible();
+  // Recovery keeps its own standalone Updates, for when the desktop builds differ.
+  expect(
+    document.querySelector('#taixu-connection-gate details.taixu-update summary')?.textContent
+  ).toBe('Updates');
   expect(mock.seed).not.toHaveBeenCalled();
   // A real pointer click catches an invisible splash intercepting the button.
   await reconnect.click();

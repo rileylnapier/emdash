@@ -3,6 +3,10 @@ import { page } from 'vitest/browser';
 import {
   mountUpdateControls,
   registerUpdatePreflight,
+  retainSharedUpdates,
+  sharedUpdateStatus,
+  sharedUpdates,
+  showSharedUpdates,
 } from '@core/features/taixu/browser/update-controls';
 const mock = vi.hoisted(() => ({
   status: vi.fn(),
@@ -188,4 +192,40 @@ it('replaces stale-release retry with a fresh check and clears the old version a
   await page.getByRole('button', { name: 'Check for updates', exact: true }).click();
   expect(mock.check).toHaveBeenCalledOnce();
   expect(mock.install).toHaveBeenCalledOnce();
+});
+
+it('shares one hidden control per window that the Apps page borrows without a second poller', async () => {
+  mock.status.mockResolvedValue({ ...idle, status: 'ready', target: 'this-mac' });
+  mock.install.mockResolvedValue({ ...idle, status: 'preparing', target: 'this-mac' });
+  const releaseShell = retainSharedUpdates();
+  const releaseCard = retainSharedUpdates();
+  dispose = () => {
+    releaseCard();
+    releaseShell();
+  };
+  expect(document.querySelectorAll('.taixu-update-panel')).toHaveLength(1);
+  await expect.poll(sharedUpdateStatus).toBe('ready');
+  expect(mock.status).toHaveBeenCalledOnce();
+  const host = document.querySelector<HTMLElement>('.taixu-update-host')!;
+  expect(host.hidden).toBe(true);
+  expect(host.textContent).not.toContain('Close');
+  const slot = document.createElement('div');
+  document.body.append(slot);
+  const hide = showSharedUpdates(slot);
+  await page.getByRole('button', { name: 'Update this Mac', exact: true }).click();
+  expect(mock.install).toHaveBeenCalledOnce();
+  hide();
+  slot.remove();
+  expect(host.querySelector('.taixu-update-panel')).toBe(sharedUpdates()!.panel);
+  // The card letting go leaves the window's control (and its hold handling) running.
+  releaseCard();
+  expect(sharedUpdates()).toBeDefined();
+  mock.status.mockResolvedValue({ ...idle, hold: 'lease' });
+  await expect
+    .poll(() => mock.ack.mock.calls, { timeout: 4000 })
+    .toEqual([[{ hold: 'lease', error: null }]]);
+  releaseShell();
+  expect(sharedUpdates()).toBeUndefined();
+  expect(sharedUpdateStatus()).toBeNull();
+  expect(document.querySelector('.taixu-update-host, dialog.taixu-update-hold')).toBeNull();
 });

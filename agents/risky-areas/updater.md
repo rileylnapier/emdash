@@ -180,9 +180,18 @@ The versioned maintenance contract remains readable across build differences. Ar
 checksums and commit-time bundle signature, signer, fingerprint and architecture validation
 remain mandatory. macOS `lipo` expects the executable before `-verify_arch`.
 
+The renderer keeps exactly one update control per window (`retainSharedUpdates` in
+`taixu/browser/update-controls.ts`), mounted hidden in every display mode so a restart hold
+is acknowledged and its overlay shown whichever page is open, including when another Mac
+starts the update. The Apps page's Taixu card borrows that control's panel, the Apps
+badge reads its status, and the laptop's "Update everything" checks and installs through
+it as its last step. Do not mount a second poller. Only the recovery screen mounts its own
+standalone control.
+
 Focused coverage: Taixu `update-coordinator`, `update-host`, `update-guard`, `update-activity`,
-`update-files` and `studio` node tests; shutdown `index` tests; headless `taixu-updates` and
-`studio-startup` browser tests. These use isolated fixtures and no paid model calls.
+`update-files` and `studio` node tests; shutdown `index` tests; headless `taixu-updates`,
+`studio-startup`, `taixu-shell` and `apps-panel` browser tests. These use isolated fixtures
+and no paid model calls.
 
 Claude's `idle_prompt` notification confirms that a turn finished and it is waiting for
 the next message. The provider normalizes it to completion, so an idle conversation may

@@ -23,6 +23,10 @@ const mocks = vi.hoisted(() => ({
   workStarted: vi.fn(),
   provisionTask: vi.fn(async () => ({ kind: 'active' })),
   getTaskManagerStore: vi.fn(),
+  updateStatus: vi.fn(),
+  checkUpdate: vi.fn(),
+  installUpdate: vi.fn(),
+  acknowledgeUpdate: vi.fn(),
 }));
 vi.mock('../api/browser/client', () => ({
   getTaixuClient: async () => ({
@@ -54,10 +58,11 @@ vi.mock('../api/browser/studio-client', () => ({
     status: mocks.studioStatus,
     setServerMode: mocks.setServerMode,
     share: mocks.share,
+    updateStatus: mocks.updateStatus,
+    checkUpdate: mocks.checkUpdate,
+    installUpdate: mocks.installUpdate,
+    acknowledgeUpdate: mocks.acknowledgeUpdate,
   }),
-}));
-vi.mock('./update-button', () => ({
-  UpdateButton: () => <span data-testid="updates">Updates</span>,
 }));
 vi.mock('@core/primitives/wire/browser/use-remote-model-state', () => ({
   useRemoteModelState: mocks.usageState,
@@ -95,6 +100,16 @@ const studio = {
   build: '0123456789abcdef',
   uptimeSeconds: 7260,
 };
+const taixuCurrent = {
+  status: 'idle',
+  hold: null,
+  current: 'a'.repeat(64),
+  currentVersion: '1.3.0',
+  release: null,
+  progress: 0,
+  message: 'Both installations are current.',
+  remote: true,
+};
 beforeAll(() => {
   (
     globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
@@ -119,6 +134,8 @@ beforeEach(() => {
   mocks.retryUsage.mockResolvedValue(undefined);
   mocks.workStarted.mockResolvedValue(() => {});
   mocks.getTaskManagerStore.mockReturnValue({ provisionTask: mocks.provisionTask });
+  mocks.updateStatus.mockResolvedValue(taixuCurrent);
+  mocks.acknowledgeUpdate.mockResolvedValue(undefined);
   host = document.createElement('div');
   host.className = 'emdark';
   document.body.append(host);
@@ -214,14 +231,17 @@ it('ignores launch requests from outside the embedded world', async () => {
 it('unloads the world without restarting the backend, and restores it on request', async () => {
   await mount();
   const previousFrame = host.querySelector('iframe');
-  const updates = host.querySelector('[data-testid="updates"]');
+  // The window's one update control is mounted out of sight and survives the switch.
+  const updates = document.querySelector('.taixu-update-host .taixu-update-panel');
+  expect(updates).not.toBeNull();
   expect(previousFrame).not.toBeNull();
   await click('This Mac ▾');
   await click('Use server mode');
   expect(mocks.setServerMode).toHaveBeenCalledExactlyOnceWith({ enabled: true });
   expect(host.querySelector('iframe')).toBeNull();
   expect(previousFrame!.isConnected).toBe(false);
-  expect(host.querySelector('[data-testid="updates"]')).toBe(updates);
+  expect(document.querySelectorAll('.taixu-update-panel')).toHaveLength(1);
+  expect(document.querySelector('.taixu-update-panel')).toBe(updates);
   expect(host.querySelector('h1')?.textContent).toBe('Server mode');
   expect(mocks.connect).toHaveBeenCalledTimes(1);
   expect(mocks.share).not.toHaveBeenCalled();
@@ -441,7 +461,9 @@ it('scrolls the Apps page below the title bar when apps do not fit', async () =>
   await mount();
   await click('Apps');
   const view = host.querySelector<HTMLElement>('.taixu-apps-page')!;
-  await expect.poll(() => view.querySelectorAll('.taixu-app-card').length).toBe(ids.length);
+  await expect
+    .poll(() => view.querySelectorAll('.taixu-app-card:not(.taixu-update-card)').length)
+    .toBe(ids.length);
   expect(view.getBoundingClientRect().bottom).toBeLessThanOrEqual(480);
   expect(view.scrollHeight).toBeGreaterThan(view.clientHeight);
   view.scrollTop = view.scrollHeight;
@@ -508,4 +530,88 @@ it('shows the same Apps panel in compact server mode and disables stopping occup
   await click('Usage');
   await expect.poll(() => !!host.querySelector('.taixu-apps')?.checkVisibility()).toBe(false);
   await page.viewport(1280, 720);
+});
+
+const updateReady = {
+  ...taixuCurrent,
+  status: 'ready',
+  target: 'both',
+  progress: 100,
+  message: 'Update ready for Studio and this Mac.',
+  release: {
+    protocol: 1,
+    build: 'b'.repeat(64),
+    version: '1.4.0',
+    createdAt: new Date().toISOString(),
+    arch: 'arm64',
+    size: 1000,
+    sha256: 'c'.repeat(64),
+    notes: 'One place for updates.',
+  },
+};
+it('has no separate Updates control and badges Apps while a Taixu update is ready', async () => {
+  mocks.updateStatus.mockResolvedValue(updateReady);
+  await mount();
+  const titlebar = host.querySelector('header')!;
+  expect(titlebar.querySelector('details, .taixu-update')).toBeNull();
+  expect(titlebar.textContent).not.toContain('Updates');
+  const apps = page.getByRole('button', { name: 'Apps · Taixu update ready', exact: true });
+  await expect.element(apps).toBeVisible();
+  expect(titlebar.querySelector('.taixu-update-dot')).not.toBeNull();
+  await apps.click();
+  // The Apps page shows the same panel, then returns it to its hidden host.
+  const card = page.getByRole('article', { name: 'Taixu', exact: true });
+  await expect.element(card.getByText('One place for updates.', { exact: true })).toBeVisible();
+  const panel = host.querySelector('.taixu-update-card .taixu-update-panel');
+  expect(document.querySelectorAll('.taixu-update-panel')).toHaveLength(1);
+  await card.getByRole('button', { name: 'Update both Macs', exact: true }).click();
+  expect(mocks.installUpdate).toHaveBeenCalledOnce();
+  await click('Back to Taixu');
+  expect(document.querySelector('.taixu-update-host .taixu-update-panel')).toBe(panel);
+  mocks.updateStatus.mockResolvedValue({ ...updateReady, status: 'downloading', progress: 40 });
+  await expect
+    .element(page.getByRole('button', { name: 'Apps · Taixu update downloading', exact: true }), {
+      timeout: 4000,
+    })
+    .toBeVisible();
+  mocks.updateStatus.mockResolvedValue(taixuCurrent);
+  await expect.poll(() => host.querySelector('.taixu-update-dot'), { timeout: 4000 }).toBeNull();
+});
+
+it('badges the server-mode Apps tab without a title-bar Updates control', async () => {
+  mocks.studioStatus.mockResolvedValue({ ...studio, serverMode: true });
+  mocks.updateStatus.mockResolvedValue({ ...updateReady, status: 'blocked' });
+  await mount();
+  await expect
+    .element(page.getByRole('tab', { name: 'Apps · Taixu update ready', exact: true }))
+    .toBeVisible();
+  expect(host.querySelector('header')!.textContent).not.toContain('Updates');
+  await page.getByRole('tab', { name: 'Apps · Taixu update ready', exact: true }).click();
+  await expect
+    .element(
+      page
+        .getByRole('article', { name: 'Taixu', exact: true })
+        .getByRole('button', { name: 'Retry · Update both Macs', exact: true })
+    )
+    .toBeVisible();
+});
+
+it('acknowledges a restart hold with the Apps page closed, in either mode', async () => {
+  mocks.updateStatus.mockResolvedValue({ ...updateReady, status: 'preparing', hold: 'lease-1' });
+  await mount();
+  expect(host.querySelector('.taixu-apps-page')).toBeNull();
+  await expect
+    .poll(() => mocks.acknowledgeUpdate.mock.calls)
+    .toEqual([[{ hold: 'lease-1', error: null }]]);
+  await expect.element(page.getByRole('dialog')).toBeVisible();
+  // Another Mac's update may restart this one while it shows server mode.
+  mocks.updateStatus.mockResolvedValue(taixuCurrent);
+  await expect.poll(() => document.querySelector('dialog')?.open, { timeout: 4000 }).toBe(false);
+  await click('This Mac ▾');
+  await click('Use server mode');
+  mocks.updateStatus.mockResolvedValue({ ...updateReady, status: 'preparing', hold: 'lease-2' });
+  await expect
+    .poll(() => mocks.acknowledgeUpdate.mock.calls.at(-1), { timeout: 4000 })
+    .toEqual([{ hold: 'lease-2', error: null }]);
+  expect(document.querySelectorAll('dialog.taixu-update-hold')).toHaveLength(1);
 });
