@@ -20,6 +20,9 @@ const mocks = vi.hoisted(() => ({
   usageState: vi.fn(),
   refreshUsage: vi.fn(),
   retryUsage: vi.fn(),
+  workStarted: vi.fn(),
+  provisionTask: vi.fn(async () => ({ kind: 'active' })),
+  getTaskManagerStore: vi.fn(),
 }));
 vi.mock('../api/browser/client', () => ({
   getTaixuClient: async () => ({
@@ -28,7 +31,11 @@ vi.mock('../api/browser/client', () => ({
     connect: mocks.connect,
     taskExists: mocks.taskExists,
     status: mocks.status,
+    workStarted: { subscribe: mocks.workStarted },
   }),
+}));
+vi.mock('@core/features/tasks/api/browser/task-state/task-selectors', () => ({
+  getTaskManagerStore: mocks.getTaskManagerStore,
 }));
 vi.mock('@core/manifests/browser/modal-api', () => ({ openModal: mocks.openModal }));
 vi.mock('@core/primitives/navigation/browser/navigation-selectors', () => ({
@@ -110,6 +117,8 @@ beforeEach(() => {
   });
   mocks.refreshUsage.mockResolvedValue(undefined);
   mocks.retryUsage.mockResolvedValue(undefined);
+  mocks.workStarted.mockResolvedValue(() => {});
+  mocks.getTaskManagerStore.mockReturnValue({ provisionTask: mocks.provisionTask });
   host = document.createElement('div');
   host.className = 'emdark';
   document.body.append(host);
@@ -175,6 +184,19 @@ it('opens the native review dialog with the saved brief prompt', async () => {
     initialName: undefined,
     projectId: undefined,
   });
+});
+it('provisions work a Head started, so its agent starts without leaving the chat', async () => {
+  await mount();
+  await vi.waitFor(() => expect(mocks.workStarted).toHaveBeenCalled());
+  const [, { onEvent }] = mocks.workStarted.mock.calls[0] as unknown as [
+    undefined,
+    { onEvent: (target: { taskId: string; projectId: string }) => void },
+  ];
+  await act(async () => onEvent({ taskId: 'task-1', projectId: 'project-1' }));
+  expect(mocks.getTaskManagerStore).toHaveBeenCalledWith('project-1');
+  expect(mocks.provisionTask).toHaveBeenCalledExactlyOnceWith('task-1');
+  expect(mocks.navigate).not.toHaveBeenCalled();
+  expect(host.querySelector('main')!.hidden).toBe(false);
 });
 it('opens an existing native task through its world link', async () => {
   await mount();

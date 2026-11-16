@@ -11,13 +11,17 @@ import type { TaskService } from '@core/features/tasks/api/node/task-service';
 import type { AgentEvent } from '@core/primitives/agents/api/agent-events';
 import type { Conversation } from '@core/primitives/conversations/api';
 import type { Project } from '@core/primitives/projects/api';
+import type { CreateTaskParams } from '@core/primitives/tasks/api';
 import {
   taixuContract,
   followupReceiptSchema,
   followupInputSchema,
   archiveInputSchema,
   workTargetSchema,
+  type workLinkSchema,
   mergeReceiptSchema,
+  headStartInputSchema,
+  type HeadStartInput,
   type WorkFollowup,
   type WorkTarget,
   type WorkArchiveInput,
@@ -25,6 +29,8 @@ import {
 } from '../api/contract';
 import { requestApps } from './apps-channel';
 import { prepareDataHome } from './data-home';
+import { taixuWorkEvents } from './event-host';
+import { HeadTaskUnavailable, headTaskErrorMessage, type HeadTaskRequest } from './head-task';
 import { readProjectDocuments } from './project-documents';
 import { registerHeadUpdateGuard } from './update-guard';
 import type { ArchiveWork } from './work-archive';
@@ -43,10 +49,13 @@ export function createTaixuWireController({
   prepareFollowup,
   workMerge,
   archiveWork,
+  resolveHeadTask,
 }: {
   readProjects: () => Promise<Project[]>;
   readConversations: () => Promise<Conversation[]>;
-  taskService: Pick<TaskService, 'getTasks'>;
+  taskService: Pick<TaskService, 'getTasks' | 'createTask'>;
+  /** The task dialog's defaults for a brief, resolved in this process (see head-task.ts). */
+  resolveHeadTask?: (request: HeadTaskRequest) => Promise<CreateTaskParams>;
   scope: Scope;
   onAgentEvent?: (listener: (event: AgentEvent) => Promise<void>) => () => void;
   workMerge?: ReturnType<typeof createWorkMerge>;
@@ -366,7 +375,7 @@ export function createTaixuWireController({
           const request = z
             .object({
               id: z.string().uuid(),
-              action: z.enum(['refresh', 'send', 'image-context', 'archive', 'merge']),
+              action: z.enum(['refresh', 'send', 'image-context', 'archive', 'merge', 'start']),
               input: z.unknown(),
               expiresAt: z.number().int().positive(),
             })
@@ -382,6 +391,9 @@ export function createTaixuWireController({
             if (action === 'send') return followupWork(followupInputSchema.parse(input), canSubmit);
             // A Head merges only when Riley asks: the same review and approval as Review merge.
             if (action === 'merge') return mergeForHead(headMergeSchema.parse(input));
+            // A Head starts work only from a saved brief Taixu resolved for its conversation.
+            if (action === 'start')
+              return startForHead(headStartInputSchema.parse(input), canSubmit);
             // Automatic archive of merged work: only linked tasks, through Archive work's checks.
             if (action === 'archive') {
               const target = archiveInputSchema.parse(input);
@@ -819,6 +831,99 @@ export function createTaixuWireController({
     }
   }
 
+  // Saves the origin before any agent can start, as the task dialog's onBeforeCreate does.
+  function saveLink(input: z.infer<typeof workLinkSchema>) {
+    const worker = child;
+    if (!worker || !url) throw new Error('Reconnect to Taixu before starting work.');
+    return new Promise<void>((resolve, reject) => {
+      const id = randomUUID();
+      const done = (error?: string) => {
+        clearTimeout(timeout);
+        worker.removeListener('message', onMessage);
+        worker.removeListener('exit', onExit);
+        if (error) reject(new Error(error));
+        else resolve();
+      };
+      const onExit = () => done('Taixu disconnected before the work handoff was saved.');
+      const onMessage = (message: unknown) => {
+        if (
+          message &&
+          typeof message === 'object' &&
+          'type' in message &&
+          message.type === 'work-linked' &&
+          'id' in message &&
+          message.id === id
+        ) {
+          const error =
+            'error' in message && typeof message.error === 'string' ? message.error : undefined;
+          if (!error) targets.set(input.taskId, input.projectId);
+          done(error);
+        }
+      };
+      const timeout = setTimeout(
+        () => done('Could not confirm the work handoff. Reconnect and try again.'),
+        5000
+      );
+      worker.on('message', onMessage);
+      worker.once('exit', onExit);
+      try {
+        worker.postMessage({ type: 'work-link', id, input });
+      } catch {
+        done('Could not save the work handoff. Reconnect and try again.');
+      }
+    });
+  }
+
+  /**
+   * Creates a Head's work through the same main-process creation as the task dialog, with the
+   * dialog's defaults. The renderer then provisions it, which starts the agent as it would after
+   * Create. Known refusals return a message; nothing is created for them.
+   */
+  async function startForHead(input: HeadStartInput, canSubmit: () => boolean) {
+    const refused = (message: string) => ({ status: 'refused' as const, message });
+    if (!resolveHeadTask) return refused('Starting work is unavailable in this desktop.');
+    activeSubmissions++;
+    try {
+      if (!(await readProjects()).some((p) => p.id === input.projectId))
+        return refused('That project is not registered in this desktop.');
+      const handoff = { taskId: randomUUID(), projectId: input.projectId, name: input.name };
+      let params: CreateTaskParams;
+      try {
+        params = await resolveHeadTask({ ...handoff, prompt: input.prompt });
+      } catch (error) {
+        if (error instanceof HeadTaskUnavailable) return refused(error.message);
+        throw error;
+      }
+      if (updateHeld || !canSubmit()) throw new Error('Work request stopped.');
+      try {
+        await saveLink({ ...handoff, origin: input.origin });
+      } catch (error) {
+        return refused(error instanceof Error ? error.message : 'The work handoff was not saved.');
+      }
+      const fail = async (message: string) => {
+        try {
+          await saveLink({ ...handoff, origin: input.origin, error: message });
+        } catch {
+          /* The pending link reports that creation was not confirmed. */
+        }
+        return refused(message);
+      };
+      if (updateHeld || !canSubmit())
+        return fail('Task creation was cancelled before work started.');
+      let result: Awaited<ReturnType<typeof taskService.createTask>>;
+      try {
+        result = await taskService.createTask(params);
+      } catch {
+        return fail('Task creation failed. Open Inspect work for details before retrying.');
+      }
+      if (!result.success) return fail(headTaskErrorMessage(result.error));
+      taixuWorkEvents.emit(undefined, { taskId: handoff.taskId, projectId: handoff.projectId });
+      return { status: 'started' as const, ...handoff };
+    } finally {
+      activeSubmissions--;
+    }
+  }
+
   function localAppsHost(): UtilityProcess {
     // Keep one hub per Mac once started, so an Update all job is never split.
     if (appsWorker) return appsWorker;
@@ -851,6 +956,7 @@ export function createTaixuWireController({
   });
 
   return createController(taixuContract, {
+    workStarted: taixuWorkEvents,
     apps: () => {
       if (!child || !url) throw new Error('Reconnect to Taixu to check its apps.');
       return requestApps(child);
@@ -935,45 +1041,7 @@ export function createTaixuWireController({
     },
     followupWork: (input) => followupWork(input),
     linkWork: async (input) => {
-      const worker = child;
-      if (!worker || !url) throw new Error('Reconnect to Taixu before starting work.');
-      await new Promise<void>((resolve, reject) => {
-        const id = randomUUID();
-        const done = (error?: string) => {
-          clearTimeout(timeout);
-          worker.removeListener('message', onMessage);
-          worker.removeListener('exit', onExit);
-          if (error) reject(new Error(error));
-          else resolve();
-        };
-        const onExit = () => done('Taixu disconnected before the work handoff was saved.');
-        const onMessage = (message: unknown) => {
-          if (
-            message &&
-            typeof message === 'object' &&
-            'type' in message &&
-            message.type === 'work-linked' &&
-            'id' in message &&
-            message.id === id
-          ) {
-            const error =
-              'error' in message && typeof message.error === 'string' ? message.error : undefined;
-            if (!error) targets.set(input.taskId, input.projectId);
-            done(error);
-          }
-        };
-        const timeout = setTimeout(
-          () => done('Could not confirm the work handoff. Reconnect and try again.'),
-          5000
-        );
-        worker.on('message', onMessage);
-        worker.once('exit', onExit);
-        try {
-          worker.postMessage({ type: 'work-link', id, input });
-        } catch {
-          done('Could not save the work handoff. Reconnect and try again.');
-        }
-      });
+      await saveLink(input);
       return { saved: true as const };
     },
     projectExists: async ({ projectId }) => (await readProjects()).some((p) => p.id === projectId),
