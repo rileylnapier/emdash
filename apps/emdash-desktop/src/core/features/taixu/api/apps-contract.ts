@@ -20,12 +20,15 @@ export const appsStatusSchema = z.object({
   updateAll: z
     .object({
       running: z.boolean(),
-      current: appIdSchema.nullable(),
-      results: z.array(
+      startedAt: z.string(),
+      finishedAt: z.string().nullable(),
+      apps: z.array(
         z.object({
           appId: appIdSchema,
-          outcome: z.enum(['updated', 'current', 'skipped', 'failed']),
-          message: z.string(),
+          status: z.enum(['queued', 'working', 'updated', 'current', 'skipped', 'failed']),
+          step: z.string().nullable(),
+          progress: z.number().min(0).max(1).nullable(),
+          message: z.string().nullable(),
         })
       ),
     })
