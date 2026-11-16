@@ -493,7 +493,7 @@ it('fails the receipt if the utility exits before confirming its save', async ()
 });
 
 async function headRequest(
-  action: 'send' | 'refresh' | 'image-context' | 'archive',
+  action: 'send' | 'refresh' | 'image-context' | 'archive' | 'merge',
   input: unknown,
   expiresAt = Date.now() + 60000
 ) {
@@ -803,4 +803,64 @@ it('archives merged linked work when Taixu asks, through Archive work, and refus
     })
   );
   expect(mocks.archiveWork).not.toHaveBeenCalled();
+});
+
+const headPr = {
+  provider: 'github',
+  status: 'open',
+  url: 'https://github.com/o/r/pull/9',
+  isDraft: true,
+};
+const headReviewId = '00000000-0000-4000-8000-000000000009';
+it('returns a blocked PR to the Head without approving', async () => {
+  await linkedWork();
+  mocks.reviewMerge.mockResolvedValueOnce({
+    reviewId: headReviewId,
+    pr: headPr,
+    blockedReason: 'Required review is not complete.',
+    warning: null,
+  });
+  const reply = await headRequest('merge', { taskId, projectId: 'project' });
+  expect(reply.result).toMatchObject({ status: 'blocked', prUrl: headPr.url });
+  expect(mocks.approveMerge).not.toHaveBeenCalled();
+});
+it('returns a warning for Riley unless he accepted it', async () => {
+  await linkedWork();
+  mocks.reviewMerge.mockResolvedValueOnce({
+    reviewId: headReviewId,
+    pr: headPr,
+    blockedReason: null,
+    warning: 'Checks are missing.',
+  });
+  const reply = await headRequest('merge', { taskId, projectId: 'project' });
+  expect(reply.result).toMatchObject({ status: 'needs-approval', message: 'Checks are missing.' });
+  expect(mocks.approveMerge).not.toHaveBeenCalled();
+});
+it('approves an accepted merge through the reviewed path, marking an agent draft ready', async () => {
+  await linkedWork();
+  mocks.reviewMerge.mockResolvedValueOnce({
+    reviewId: headReviewId,
+    pr: headPr,
+    blockedReason: null,
+    warning: 'Checks are missing.',
+  });
+  mocks.approveMerge.mockResolvedValueOnce({ status: 'merged', message: 'Merged.' });
+  const reply = await headRequest('merge', {
+    taskId,
+    projectId: 'project',
+    strategy: 'merge',
+    acceptWarnings: true,
+  });
+  expect(reply.result).toMatchObject({ status: 'merged', prUrl: headPr.url });
+  expect(mocks.approveMerge).toHaveBeenCalledWith(
+    {
+      taskId,
+      projectId: 'project',
+      reviewId: headReviewId,
+      strategy: 'merge',
+      markReady: true,
+      acceptWarnings: true,
+    },
+    expect.any(Function)
+  );
 });
