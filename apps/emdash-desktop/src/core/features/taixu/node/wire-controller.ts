@@ -366,7 +366,7 @@ export function createTaixuWireController({
           const request = z
             .object({
               id: z.string().uuid(),
-              action: z.enum(['refresh', 'send', 'image-context', 'archive']),
+              action: z.enum(['refresh', 'send', 'image-context', 'archive', 'merge']),
               input: z.unknown(),
               expiresAt: z.number().int().positive(),
             })
@@ -380,6 +380,8 @@ export function createTaixuWireController({
           void (async () => {
             if (updateHeld || !canSubmit()) throw new Error('Work request stopped.');
             if (action === 'send') return followupWork(followupInputSchema.parse(input), canSubmit);
+            // A Head merges only when Riley asks: the same review and approval as Review merge.
+            if (action === 'merge') return mergeForHead(headMergeSchema.parse(input));
             // Automatic archive of merged work: only linked tasks, through Archive work's checks.
             if (action === 'archive') {
               const target = archiveInputSchema.parse(input);
@@ -533,6 +535,42 @@ export function createTaixuWireController({
     });
   }
 
+  const headMergeSchema = workTargetSchema.extend({
+    strategy: z.enum(['squash', 'merge', 'rebase']).default('squash'),
+    acceptWarnings: z.boolean().default(false),
+  });
+  async function mergeForHead(input: z.infer<typeof headMergeSchema>) {
+    const service = requireMerge(input);
+    const review = await service.review(input);
+    const prUrl = review.pr.url;
+    if (review.pr.provider === 'github')
+      child?.postMessage({
+        type: 'work-observation',
+        input: { ...input, status: review.pr.status, url: prUrl, at: new Date().toISOString() },
+      });
+    if (review.blockedReason) return { status: 'blocked', message: review.blockedReason, prUrl };
+    // A warning goes back to Riley; only his explicit acceptance merges past it.
+    if (review.warning && !input.acceptWarnings)
+      return { status: 'needs-approval', message: review.warning, prUrl };
+    activeSubmissions++;
+    try {
+      const result = await service.approve(
+        {
+          taskId: input.taskId,
+          projectId: input.projectId,
+          reviewId: review.reviewId,
+          strategy: input.strategy,
+          // Riley asking to merge covers marking an agent's draft PR ready.
+          markReady: review.pr.isDraft,
+          acceptWarnings: input.acceptWarnings,
+        },
+        recordMerge
+      );
+      return { ...result, prUrl };
+    } finally {
+      activeSubmissions--;
+    }
+  }
   function requireMerge(target: WorkTarget) {
     if (!workMerge || targets.get(target.taskId) !== target.projectId)
       throw new Error('This work is not linked to a Head conversation.');
