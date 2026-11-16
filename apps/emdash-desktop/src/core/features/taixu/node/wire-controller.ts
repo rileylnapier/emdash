@@ -15,10 +15,12 @@ import {
   taixuContract,
   followupReceiptSchema,
   followupInputSchema,
+  archiveInputSchema,
   workTargetSchema,
   mergeReceiptSchema,
   type WorkFollowup,
   type WorkTarget,
+  type WorkArchiveInput,
   type MergeReceiptInput,
 } from '../api/contract';
 import { requestApps } from './apps-channel';
@@ -364,7 +366,7 @@ export function createTaixuWireController({
           const request = z
             .object({
               id: z.string().uuid(),
-              action: z.enum(['refresh', 'send', 'image-context']),
+              action: z.enum(['refresh', 'send', 'image-context', 'archive']),
               input: z.unknown(),
               expiresAt: z.number().int().positive(),
             })
@@ -378,6 +380,13 @@ export function createTaixuWireController({
           void (async () => {
             if (updateHeld || !canSubmit()) throw new Error('Work request stopped.');
             if (action === 'send') return followupWork(followupInputSchema.parse(input), canSubmit);
+            // Automatic archive of merged work: only linked tasks, through Archive work's checks.
+            if (action === 'archive') {
+              const target = archiveInputSchema.parse(input);
+              if (targets.get(target.taskId) !== target.projectId)
+                throw new Error('That work is not linked to Taixu.');
+              return archiveLinkedWork(target);
+            }
             const { targets: requested } = z
               .object({ targets: z.array(workTargetSchema).max(100) })
               .parse(input);
@@ -398,7 +407,8 @@ export function createTaixuWireController({
             }
             const observations: Awaited<ReturnType<NonNullable<typeof workMerge>['observe']>>[] =
               [];
-            // Only explicit linked targets; no background GitHub polling or broad account scan.
+            // Only explicit linked targets (a Head's refresh, or the merged-work check on
+            // the owning Taixu); never a broad GitHub account scan.
             for (const target of requested) {
               if (!canSubmit() || updateHeld) break;
               if (targets.get(target.taskId) !== target.projectId || !workMerge) continue;
@@ -610,6 +620,43 @@ export function createTaixuWireController({
     });
   }
 
+  async function archiveLinkedWork(input: WorkArchiveInput) {
+    if (updateHeld) throw new Error('Wait for the Taixu update before archiving.');
+    if (
+      !(await taskService.getTasks(input.projectId)).some(
+        (task) => task.id === input.taskId && task.projectId === input.projectId
+      )
+    )
+      throw new Error('This work is not in the selected project.');
+    const linked = targets.get(input.taskId) === input.projectId;
+    const receipt = (value: Parameters<typeof recordArchive>[0]) =>
+      linked ? recordArchive(value) : Promise.resolve();
+    if (!archiveWork) throw new Error('Archiving is unavailable.');
+    activeSubmissions++;
+    try {
+      await receipt({
+        ...input,
+        status: 'pending',
+        message: 'Checking archive and cleanup readiness.',
+      });
+      let result;
+      try {
+        result = await archiveWork(input);
+      } catch (error) {
+        await receipt({
+          ...input,
+          status: 'blocked',
+          message: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
+      await receipt({ ...input, ...result, status: 'archived' });
+      return result;
+    } finally {
+      activeSubmissions--;
+    }
+  }
+
   async function followupWork(input: WorkFollowup, canSubmit = () => true) {
     if (updateHeld) return { status: 'failed' as const, message: 'Not sent: Taixu is updating.' };
     activeSubmissions++;
@@ -806,42 +853,7 @@ export function createTaixuWireController({
     readArchive: (input) => archiveWork?.read(input) ?? Promise.resolve(null),
     listArchives: ({ offset }) =>
       archiveWork?.list(offset) ?? Promise.resolve({ notes: [], nextOffset: null }),
-    archiveWork: async (input) => {
-      if (updateHeld) throw new Error('Wait for the Taixu update before archiving.');
-      if (
-        !(await taskService.getTasks(input.projectId)).some(
-          (task) => task.id === input.taskId && task.projectId === input.projectId
-        )
-      )
-        throw new Error('This work is not in the selected project.');
-      const linked = targets.get(input.taskId) === input.projectId;
-      const receipt = (value: Parameters<typeof recordArchive>[0]) =>
-        linked ? recordArchive(value) : Promise.resolve();
-      if (!archiveWork) throw new Error('Archiving is unavailable.');
-      activeSubmissions++;
-      try {
-        await receipt({
-          ...input,
-          status: 'pending',
-          message: 'Checking archive and cleanup readiness.',
-        });
-        let result;
-        try {
-          result = await archiveWork(input);
-        } catch (error) {
-          await receipt({
-            ...input,
-            status: 'blocked',
-            message: error instanceof Error ? error.message : String(error),
-          });
-          throw error;
-        }
-        await receipt({ ...input, ...result, status: 'archived' });
-        return result;
-      } finally {
-        activeSubmissions--;
-      }
-    },
+    archiveWork: (input) => archiveLinkedWork(input),
     restoreWork: async (input) => {
       requireMerge(input);
       if (!archiveWork) throw new Error('Restoring is unavailable.');
