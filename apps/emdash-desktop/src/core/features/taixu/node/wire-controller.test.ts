@@ -10,6 +10,8 @@ import type { Conversation } from '@core/primitives/conversations/api';
 import type { Project } from '@core/primitives/projects/api';
 import { taixuContract } from '../api/contract';
 import type { MergeApproval, MergeReceiptInput } from '../api/contract';
+import { taixuWorkEvents } from './event-host';
+import { HeadTaskUnavailable } from './head-task';
 import { createTaixuWireController } from './wire-controller';
 import { WorkFollowupUnavailable } from './work-followup';
 
@@ -32,6 +34,8 @@ const mocks = vi.hoisted(() => ({
   restoreWork: vi.fn(),
   listArchives: vi.fn(),
   readArchive: vi.fn(),
+  createTask: vi.fn(),
+  resolveHeadTask: vi.fn(),
 }));
 vi.mock('./update-guard', () => ({
   registerHeadUpdateGuard: (guard: (hold: boolean) => Promise<void>) => {
@@ -250,7 +254,8 @@ beforeEach(async () => {
           title: 'private transcript',
         } as Conversation,
       ],
-      taskService: { getTasks: mocks.getTasks },
+      taskService: { getTasks: mocks.getTasks, createTask: mocks.createTask },
+      resolveHeadTask: mocks.resolveHeadTask,
       prepareFollowup: mocks.prepareFollowup,
       readWorkReply: mocks.readWorkReply,
       readWorkImageContext: mocks.readWorkImageContext,
@@ -493,11 +498,11 @@ it('fails the receipt if the utility exits before confirming its save', async ()
 });
 
 async function headRequest(
-  action: 'send' | 'refresh' | 'image-context' | 'archive' | 'merge',
+  action: 'send' | 'refresh' | 'image-context' | 'archive' | 'merge' | 'start',
   input: unknown,
-  expiresAt = Date.now() + 60000
+  expiresAt = Date.now() + 60000,
+  id: string = followup.requestId
 ) {
-  const id = followup.requestId;
   worker.emit('message', { type: 'head-work-request', id, action, input, expiresAt });
   await vi.waitFor(() =>
     expect(worker.postMessage).toHaveBeenCalledWith(
@@ -863,4 +868,172 @@ it('approves an accepted merge through the reviewed path, marking an agent draft
     },
     expect.any(Function)
   );
+});
+
+const startInput = {
+  origin: {
+    head: 'eng-head',
+    station: 'studio',
+    project: 'taixu',
+    file: '2026-11-16-fix-roofs.md',
+  },
+  projectId: 'project',
+  name: 'taixu-fix-roofs',
+  prompt: 'Project context.\n\nWork brief:\n# Fix roofs',
+};
+const startIds = [
+  '00000000-0000-4000-8000-000000000101',
+  '00000000-0000-4000-8000-000000000102',
+  '00000000-0000-4000-8000-000000000103',
+];
+async function startableWork(linkError?: string) {
+  await wire.client.connect({});
+  const order: string[] = [];
+  const links: { taskId: string; origin: unknown; error?: string }[] = [];
+  worker.postMessage.mockImplementation((message) => {
+    if (message.type !== 'work-link') return;
+    order.push(message.input.error ? 'link-error' : 'link');
+    links.push(message.input);
+    queueMicrotask(() =>
+      worker.emit('message', {
+        type: 'work-linked',
+        id: message.id,
+        ...(linkError && !message.input.error ? { error: linkError } : {}),
+      })
+    );
+  });
+  mocks.resolveHeadTask.mockImplementation(async (request) => ({
+    id: request.taskId,
+    projectId: request.projectId,
+    taskConfig: { version: '1', name: request.name },
+    workspaceConfig: { version: '2', git: { kind: 'none' }, workspace: { kind: 'new-worktree' } },
+  }));
+  mocks.createTask.mockImplementation(async (params) => {
+    order.push('create');
+    return { success: true, data: { task: { id: params.id, projectId: params.projectId } } };
+  });
+  return { order, links };
+}
+
+it('starts a Head brief: links it, then creates it with the dialog defaults and announces it', async () => {
+  const { order, links } = await startableWork();
+  const announced = vi.spyOn(taixuWorkEvents, 'emit');
+  const reply = await headRequest('start', startInput);
+  expect(reply.result).toMatchObject({
+    status: 'started',
+    projectId: 'project',
+    name: 'taixu-fix-roofs',
+  });
+  const created = reply.result.taskId;
+  expect(order).toEqual(['link', 'create']);
+  expect(links[0]).toEqual({
+    taskId: created,
+    projectId: 'project',
+    name: 'taixu-fix-roofs',
+    origin: startInput.origin,
+  });
+  expect(mocks.resolveHeadTask).toHaveBeenCalledWith({
+    taskId: created,
+    projectId: 'project',
+    name: 'taixu-fix-roofs',
+    prompt: startInput.prompt,
+  });
+  expect(mocks.createTask).toHaveBeenCalledWith(expect.objectContaining({ id: created }));
+  expect(announced).toHaveBeenCalledWith(undefined, { taskId: created, projectId: 'project' });
+  // The new task is linked, so its reports and follow-ups reach the Head conversation.
+  mocks.getTasks.mockResolvedValue([{ id: created, projectId: 'project' }]);
+  await expect(wire.client.taskExists({ taskId: created, projectId: 'project' })).resolves.toBe(
+    true
+  );
+});
+
+it('refuses unknown projects, unsupported defaults and briefs Taixu will not link', async () => {
+  await startableWork('The brief is not in this conversation.');
+  const unknown = await headRequest(
+    'start',
+    { ...startInput, projectId: 'other' },
+    undefined,
+    startIds[0]
+  );
+  expect(unknown.result).toMatchObject({ status: 'refused' });
+  expect(mocks.resolveHeadTask).not.toHaveBeenCalled();
+  mocks.resolveHeadTask.mockRejectedValueOnce(
+    new HeadTaskUnavailable('No coding agent is installed.')
+  );
+  const unsupported = await headRequest('start', startInput, undefined, startIds[1]);
+  expect(unsupported.result).toEqual({
+    status: 'refused',
+    message: 'No coding agent is installed.',
+  });
+  const unlinked = await headRequest('start', startInput, undefined, startIds[2]);
+  expect(unlinked.result).toEqual({
+    status: 'refused',
+    message: 'The brief is not in this conversation.',
+  });
+  expect(mocks.createTask).not.toHaveBeenCalled();
+  // A model-supplied prompt or project shape never reaches creation.
+  const id = '00000000-0000-4000-8000-000000000104';
+  worker.emit('message', {
+    type: 'head-work-request',
+    id,
+    action: 'start',
+    input: { file: 'brief.md' },
+    expiresAt: Date.now() + 60000,
+  });
+  await vi.waitFor(() =>
+    expect(worker.postMessage).toHaveBeenCalledWith({
+      type: 'head-work-result',
+      id,
+      error: 'Work request unavailable.',
+    })
+  );
+});
+
+it('records a failed creation on the work link instead of leaving it pending', async () => {
+  const { order, links } = await startableWork();
+  mocks.createTask.mockResolvedValueOnce({
+    success: false,
+    error: { type: 'provision-failed', message: 'Worktree root is not writable.' },
+  });
+  const reply = await headRequest('start', startInput);
+  expect(reply.result).toEqual({
+    status: 'refused',
+    message: 'Task creation failed: Worktree root is not writable.',
+  });
+  expect(order).toEqual(['link', 'link-error']);
+  expect(links[1]).toMatchObject({ taskId: links[0].taskId, error: reply.result.message });
+});
+
+it('does not start work during an update hold, and holds updates while starting', async () => {
+  await startableWork();
+  let finishResolve!: () => void;
+  mocks.resolveHeadTask.mockImplementationOnce(
+    (request) =>
+      new Promise((resolve) => {
+        finishResolve = () =>
+          resolve({
+            id: request.taskId,
+            projectId: request.projectId,
+            taskConfig: { version: '1', name: request.name },
+            workspaceConfig: {
+              version: '2',
+              git: { kind: 'none' },
+              workspace: { kind: 'new-worktree' },
+            },
+          });
+      })
+  );
+  const starting = headRequest('start', startInput, undefined, startIds[0]);
+  await vi.waitFor(() => expect(mocks.resolveHeadTask).toHaveBeenCalled());
+  await expect(mocks.updateGuard(true)).rejects.toThrow('work submission is in progress');
+  finishResolve();
+  expect((await starting).result).toMatchObject({ status: 'started' });
+  mocks.createTask.mockClear();
+  const holding = mocks.updateGuard(true);
+  const hold = worker.postMessage.mock.calls.find(([m]) => m.type === 'update-hold')?.[0];
+  worker.emit('message', { type: 'update-held', id: hold.id });
+  await holding;
+  const held = await headRequest('start', startInput, undefined, startIds[1]);
+  expect(held).toMatchObject({ error: 'Work request unavailable.' });
+  expect(mocks.createTask).not.toHaveBeenCalled();
 });

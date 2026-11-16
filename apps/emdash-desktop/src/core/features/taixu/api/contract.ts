@@ -1,5 +1,5 @@
 import { pullRequestSchema } from '@emdash/plugins/pull-requests/schemas';
-import { defineContract, procedure } from '@emdash/wire/rpc';
+import { defineContract, eventStream, procedure } from '@emdash/wire/rpc';
 import { z } from 'zod';
 import { appActionSchema, appsStatusSchema } from './apps-contract';
 
@@ -38,6 +38,17 @@ export const workTargetSchema = z.object({
   projectId: z.string().min(1).max(128),
 });
 export type WorkTarget = z.infer<typeof workTargetSchema>;
+/** A Head's request to start a brief. Taixu resolves the brief, name and project, never the model. */
+export const headStartInputSchema = z.object({
+  origin: workOriginSchema,
+  projectId: z.string().min(1).max(128),
+  name: z
+    .string()
+    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+    .max(64),
+  prompt: z.string().trim().min(1).max(65536),
+});
+export type HeadStartInput = z.infer<typeof headStartInputSchema>;
 export const mergeReviewSchema = z.object({
   reviewId: z.string().uuid(),
   pr: pullRequestSchema,
@@ -129,6 +140,8 @@ export const taixuContract = defineContract({
   }),
   linkWork: procedure({ input: workLinkSchema, output: z.object({ saved: z.literal(true) }) }),
   projectExists: procedure({ input: z.object({ projectId: z.string() }), output: z.boolean() }),
+  /** Work a Head started in the main process; the renderer provisions it so its agent starts. */
+  workStarted: eventStream({ key: z.void(), event: workTargetSchema }),
   taskExists: procedure({
     input: z.object({ projectId: z.string(), taskId: z.string() }),
     output: z.boolean(),

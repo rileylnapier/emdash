@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { getConversationsClient } from '@core/features/conversations/api/browser/client';
 import { settingsViewDef } from '@core/features/settings/contributions/views';
+import { getTaskManagerStore } from '@core/features/tasks/api/browser/task-state/task-selectors';
 import { taskViewDef } from '@core/features/tasks/contributions/views';
 import { confirmOpenExternalLink } from '@core/features/workbench/api/browser/open-external-link';
 import { openModal } from '@core/manifests/browser/modal-api';
@@ -88,6 +89,37 @@ export function TaixuShell({
       clearInterval(timer);
     };
   }, [url, serverMode]);
+
+  // A Head's new work is created in the main process. Provisioning it here, as the task dialog's
+  // Create does, opens its first conversation so the agent starts without navigating away.
+  useEffect(() => {
+    let disposed = false;
+    let unsubscribe: (() => void) | undefined;
+    void getTaixuClient()
+      .then((client) =>
+        client.workStarted.subscribe(undefined, {
+          onEvent: (target) => {
+            if (!disposed)
+              void getTaskManagerStore(target.projectId)
+                ?.provisionTask(target.taskId)
+                .catch(() =>
+                  setError('A Head started work that could not open. Try Inspect work.')
+                );
+          },
+        })
+      )
+      .then((off) => {
+        if (disposed) off();
+        else unsubscribe = off;
+      })
+      .catch(() => {
+        /* Head-started work still opens from Inspect work. */
+      });
+    return () => {
+      disposed = true;
+      unsubscribe?.();
+    };
+  }, []);
 
   const changeMode = async (enabled: boolean) => {
     setModeBusy(true);

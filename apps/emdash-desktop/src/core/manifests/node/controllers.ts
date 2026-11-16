@@ -22,6 +22,7 @@ import {
 import { createCatalogWireController } from '@core/features/catalog/node/wire-controller';
 import type { CompensationRunner } from '@core/features/conversations/node/createConversation';
 import { getConversations } from '@core/features/conversations/node/getConversations';
+import { getProviderSettingsService } from '@core/features/conversations/node/provider-settings-service';
 import { createConversationsWireController } from '@core/features/conversations/node/wire-controller';
 import {
   createDevPerfWireController,
@@ -56,6 +57,7 @@ import type { SearchService } from '@core/features/search/node/search-service';
 import { createSearchWireController } from '@core/features/search/node/wire-controller';
 import { createSkillsWireController } from '@core/features/skills/node/wire-controller';
 import { createSourceControlWireController } from '@core/features/source-control/node/wire-controller';
+import { createHeadTaskResolver } from '@core/features/taixu/node/head-task';
 import { createTaixuWireController } from '@core/features/taixu/node/wire-controller';
 import { createWorkArchive } from '@core/features/taixu/node/work-archive';
 import { createWorkFollowup } from '@core/features/taixu/node/work-followup';
@@ -489,12 +491,25 @@ export const desktopNodeControllers = {
       runtimeClients,
       onTaixuAgentEvent,
       telemetry,
+      appSettings,
     }) =>
       createTaixuWireController({
         readProjects: () => getProjects(db),
         readConversations: () => getConversations(db),
         taskService,
         scope,
+        // The same sources the task dialog reads: agents and install status, saved app and
+        // provider preferences, and the project's effective default branch.
+        resolveHeadTask: createHeadTaskResolver({
+          projects,
+          appSettings,
+          listAgents: () =>
+            createAgentOperations({
+              ...agentDependencies,
+              providerOverrideSettings: providerSettings,
+            }).list(),
+          readProviderSettings: (key) => getProviderSettingsService(db).read(key),
+        }),
         workMerge: createWorkMerge({
           readHead: createWorkHeadReader({ projects, taskService, workspaceIdentity, runtimes }),
           getClient: () => runtimeClients.getPullRequestsRuntimeClient(),
