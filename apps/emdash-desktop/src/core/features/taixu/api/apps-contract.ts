@@ -6,7 +6,7 @@ export const appActionSchema = z.object({
     .string()
     .regex(/^[a-f0-9]{64}$/)
     .optional(),
-  action: z.enum(['start', 'open', 'stop', 'check-update', 'update']),
+  action: z.enum(['start', 'open', 'stop', 'check-update', 'update', 'install']),
 });
 export type AppAction = z.infer<typeof appActionSchema>;
 export const appsStatusSchema = z.object({
@@ -30,6 +30,8 @@ export const appsStatusSchema = z.object({
       windowOpen: z.boolean(),
       blockers: z.array(z.string()),
       version: z.string().nullable(),
+      // Present only when the app is missing; version is the release this computer published.
+      install: z.object({ version: z.string().nullable() }).nullable().optional(),
       updates: z
         .object({
           supported: z.boolean(),

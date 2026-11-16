@@ -408,6 +408,26 @@ it('controls apps on the selected computer and preserves action failures without
   expect(host.querySelector('.taixu-apps-page')).toBeNull();
 });
 
+it('scrolls the Apps page below the title bar when apps do not fit', async () => {
+  await page.viewport(900, 480);
+  document.body.style.margin = '0';
+  const ids = ['wondercraft', 'flow', 'bloom', 'taste', 'jam', 'scout'];
+  mocks.apps.mockResolvedValue({
+    computer: 'Studio',
+    apps: ids.map((id) => ({ ...flowApp, id, name: id })),
+  });
+  await mount();
+  await click('Apps');
+  const view = host.querySelector<HTMLElement>('.taixu-apps-page')!;
+  await expect.poll(() => view.querySelectorAll('.taixu-app-card').length).toBe(ids.length);
+  expect(view.getBoundingClientRect().bottom).toBeLessThanOrEqual(480);
+  expect(view.scrollHeight).toBeGreaterThan(view.clientHeight);
+  view.scrollTop = view.scrollHeight;
+  const last = view.querySelector<HTMLElement>('[aria-label="scout"]')!;
+  expect(last.getBoundingClientRect().bottom).toBeLessThanOrEqual(480);
+  await page.viewport(1280, 720);
+});
+
 it('shows the same Apps panel in compact server mode and disables stopping occupied Flow', async () => {
   await page.viewport(520, 620);
   mocks.studioStatus.mockResolvedValue({ ...studio, serverMode: true });

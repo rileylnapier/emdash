@@ -191,3 +191,36 @@ it('explains busy-work refusal and missing connection setup', async () => {
     )
     .toBeDisabled();
 });
+it('installs a missing app from the release this computer published', async () => {
+  const next = structuredClone(status);
+  const scout = next.apps[5]!;
+  Object.assign(scout, {
+    state: 'needs-install',
+    version: null,
+    install: { version: '0.3.1' },
+    detail: 'Not installed. Version 0.3.1 is published on this Mac.',
+  });
+  const jam = next.apps[3]!;
+  Object.assign(jam, { state: 'needs-install', version: null, install: { version: null } });
+  const taste = next.apps[2]!;
+  Object.assign(taste, { state: 'needs-install', version: null, install: null });
+  mocks.apps.mockResolvedValue(next);
+  await render();
+  const card = page.getByRole('article', { name: 'Scout', exact: true });
+  await expect.element(card.getByText('Not installed', { exact: true })).toBeVisible();
+  expect(container.querySelector('[aria-label="Scout"] .taixu-app-actions')?.textContent).toBe(
+    'Install 0.3.1 on Studio'
+  );
+  await card.getByRole('button', { name: 'Install 0.3.1 on Studio' }).click();
+  expect(mocks.appAction).toHaveBeenCalledExactlyOnceWith({ appId: 'scout', action: 'install' });
+  // Nothing published: say so without offering an install.
+  await expect
+    .element(page.getByRole('article', { name: 'Jam', exact: true }).getByText('Not installed'))
+    .toBeVisible();
+  expect(container.querySelector('[aria-label="Jam"] button')).toBeNull();
+  // An older, non-hub release is still installed: it needs its own update.
+  await expect
+    .element(page.getByRole('article', { name: 'Taste', exact: true }).getByText('Update required'))
+    .toBeVisible();
+  expect(container.querySelector('[aria-label="Taste"] button')).toBeNull();
+});

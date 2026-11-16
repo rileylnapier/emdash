@@ -323,9 +323,11 @@
 }
 
 .taixu-apps-page {
-  min-height: 0;
-  flex: 1;
+  /* The shell is not a flex column: size below the title bar like the world view. */
+  box-sizing: border-box;
+  height: calc(100vh - 48px);
   overflow: auto;
+  scrollbar-gutter: stable;
   background: #0e1328;
   color: #efe6d2;
   padding: 28px;
