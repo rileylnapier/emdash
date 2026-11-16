@@ -429,3 +429,23 @@
 .taixu-apps .taixu-server-error {
   color: #f1b0a0;
 }
+/* The laptop's one-button path: Studio first, then this Mac. */
+.taixu-apps-update-both {
+  margin: 14px 0 4px;
+  padding: 14px 16px;
+  border: 1px solid #c9a24b60;
+  border-radius: 10px;
+  background: #1d2440;
+}
+.taixu-apps .taixu-apps-update-both > button {
+  background: #c9a24b;
+  border-color: #c9a24b;
+  color: #0e1328;
+  font-weight: 600;
+}
+.taixu-apps .taixu-apps-update-both > button:disabled {
+  opacity: 0.5;
+}
+.taixu-apps-update-both p {
+  margin: 8px 0 0;
+}
