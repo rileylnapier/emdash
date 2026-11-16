@@ -7,7 +7,12 @@ import { AppsPanel } from './apps-panel';
 import '@emdash/ui/style.css';
 import './taixu-shell.css';
 
-const mocks = vi.hoisted(() => ({ apps: vi.fn(), appAction: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  apps: vi.fn(),
+  appAction: vi.fn(),
+  localApps: vi.fn(),
+  localAppAction: vi.fn(),
+}));
 vi.mock('../api/browser/client', () => ({ getTaixuClient: async () => mocks }));
 let root: Root;
 let container: HTMLDivElement;
@@ -29,6 +34,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.apps.mockResolvedValue(structuredClone(status));
   mocks.appAction.mockResolvedValue(undefined);
+  mocks.localApps.mockRejectedValue(new Error('not available'));
+  mocks.localAppAction.mockResolvedValue(undefined);
   container = document.createElement('div');
   document.body.append(container);
   root = createRoot(container);
@@ -223,4 +230,74 @@ it('installs a missing app from the release this computer published', async () =
     .element(page.getByRole('article', { name: 'Taste', exact: true }).getByText('Update required'))
     .toBeVisible();
   expect(container.querySelector('[aria-label="Taste"] button')).toBeNull();
+});
+
+it('compares this Mac with Studio and updates either one, or all apps on each', async () => {
+  const studio = structuredClone(status);
+  studio.apps[0]!.version = '1.2.1';
+  studio.apps[4]!.version = '0.4.1';
+  studio.updateAll = {
+    running: true,
+    current: 'jam',
+    results: [{ appId: 'flow', outcome: 'updated', message: 'Updated 1.2.0 → 1.2.1.' }],
+  };
+  const laptop = structuredClone(status);
+  laptop.computer = 'Laptop';
+  laptop.apps[0]!.version = '1.2.0';
+  laptop.apps[0]!.updates = {
+    supported: true,
+    configured: true,
+    busy: false,
+    phase: 'ready',
+    progress: 1,
+    release: { version: '1.2.1', build: 'f'.repeat(64) },
+    blockers: [],
+    message: null,
+  };
+  laptop.apps[4]!.version = '0.4.1';
+  Object.assign(laptop.apps[5]!, {
+    state: 'needs-install',
+    version: null,
+    install: { version: null },
+  });
+  mocks.apps.mockResolvedValue(studio);
+  mocks.localApps.mockResolvedValue(laptop);
+  await render();
+  const flow = page.getByRole('article', { name: 'Flow', exact: true });
+  await expect.element(flow.getByText('This Mac 1.2.0 · Studio 1.2.1')).toBeVisible();
+  await expect
+    .element(flow.getByText('This Mac is behind Studio. They need the same version to connect.'))
+    .toBeVisible();
+  // Same version: no warning.
+  expect(container.querySelector('[aria-label="Wondercraft"] [role="status"]')).toBeNull();
+  await expect
+    .element(
+      page
+        .getByRole('article', { name: 'Scout', exact: true })
+        .getByText('This Mac not installed · Studio 0.3.0')
+    )
+    .toBeVisible();
+  await expect.element(page.getByText('Updating all on Studio · Jam…')).toBeVisible();
+  await expect.element(page.getByText('Flow: Updated 1.2.0 → 1.2.1.')).toBeVisible();
+  expect(
+    [...container.querySelectorAll('button')].find((b) => b.textContent === 'Update all on Studio')
+      ?.disabled
+  ).toBe(true);
+  await flow.getByRole('button', { name: 'Update this Mac to 1.2.1' }).click();
+  expect(mocks.localAppAction).toHaveBeenCalledExactlyOnceWith({
+    appId: 'flow',
+    action: 'update',
+    build: 'f'.repeat(64),
+  });
+  await page.getByRole('button', { name: 'Update all on this Mac' }).click();
+  expect(mocks.localAppAction).toHaveBeenLastCalledWith({ action: 'update-all' });
+  expect(mocks.appAction).not.toHaveBeenCalled();
+});
+
+it('shows one computer when this Mac is the selected one', async () => {
+  mocks.localApps.mockResolvedValue(structuredClone(status));
+  await render();
+  expect(container.textContent).not.toContain('This Mac');
+  await page.getByRole('button', { name: 'Update all on Studio' }).click();
+  expect(mocks.appAction).toHaveBeenCalledExactlyOnceWith({ action: 'update-all' });
 });

@@ -25,10 +25,13 @@ const localHost = new Set([
   'events',
 ]);
 const remoteHost = new Set(['persistDroppedBlob', 'readAudioFileDataUrl']);
+// This Mac's own apps, shown beside the Studio's.
+const localTaixu = new Set(['localApps', 'localAppAction']);
 
 export function studioRoute(path: string): 'local' | 'remote' | 'unavailable' {
   const [domain, method] = path.split('.');
   if (localDomains.has(domain)) return 'local';
+  if (domain === 'taixu' && localTaixu.has(method)) return 'local';
   if (domain === 'host') {
     if (localHost.has(method)) return 'local';
     if (remoteHost.has(method)) return 'remote';
