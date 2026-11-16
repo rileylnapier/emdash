@@ -131,6 +131,13 @@ export function AppsPanel() {
   }, [refresh]);
   // Both lists come from one Mac when Studio is not selected.
   const twoMacs = !!status && !!local && local.computer !== status.computer;
+  // This Mac never updates past what the selected Studio runs.
+  const ceilings = twoMacs
+    ? (status?.apps ?? []).flatMap((studioApp) => {
+        const version = installedVersion(studioApp);
+        return version ? [{ appId: studioApp.id, version }] : [];
+      })
+    : [];
   const act = async (input: AppAction, where: 'selected' | 'local' = 'selected') => {
     setBusy(input.action === 'update-all' ? `all-${where}` : `${where}-${input.appId}`);
     setError('');
@@ -185,7 +192,7 @@ export function AppsPanel() {
           {twoMacs && (
             <button
               disabled={!!busy || !!local?.updateAll?.running}
-              onClick={() => void act({ action: 'update-all' }, 'local')}
+              onClick={() => void act({ action: 'update-all', ceilings }, 'local')}
             >
               Update all on this Mac
             </button>
@@ -212,6 +219,8 @@ export function AppsPanel() {
           mine?.updates?.release && ['ready', 'blocked'].includes(mine.updates.phase)
             ? mine.updates.release
             : null;
+        const aheadOfStudio =
+          !!localRelease && !!there && compareVersions(localRelease.version, there) > 0;
         const update = app.updates;
         const release = update?.release;
         const updating = update?.busy || update?.phase === 'restarting';
@@ -370,10 +379,15 @@ export function AppsPanel() {
               <div className="taixu-app-actions">
                 {localRelease ? (
                   <button
-                    disabled={!!busy || !!mine.updates?.busy}
+                    disabled={!!busy || !!mine.updates?.busy || aheadOfStudio}
                     onClick={() =>
                       void act(
-                        { appId: app.id, action: 'update', build: localRelease.build },
+                        {
+                          appId: app.id,
+                          action: 'update',
+                          build: localRelease.build,
+                          ...(there ? { ceiling: there } : {}),
+                        },
                         'local'
                       )
                     }
@@ -389,6 +403,12 @@ export function AppsPanel() {
                       ? 'Start & check this Mac'
                       : 'Check this Mac for updates'}
                   </button>
+                )}
+                {aheadOfStudio && localRelease && (
+                  <p className="taixu-app-meta">
+                    {status.computer} has {there}. Update {status.computer} first so this Mac does
+                    not get ahead ({localRelease.version}).
+                  </p>
                 )}
               </div>
             )}

@@ -1,8 +1,11 @@
 import { z } from 'zod';
 
 const appIdSchema = z.enum(['flow', 'bloom', 'taste', 'jam', 'wondercraft', 'scout']);
+const versionSchema = z.string().regex(/^\d+\.\d+\.\d+$/);
 const singleAppActionSchema = z.object({
   appId: appIdSchema,
+  // The laptop never installs past the version its Studio runs.
+  ceiling: versionSchema.optional(),
   build: z
     .string()
     .regex(/^[a-f0-9]{64}$/)
@@ -12,7 +15,10 @@ const singleAppActionSchema = z.object({
 // Update all runs one app at a time on the computer that receives it.
 export const appActionSchema = z.union([
   singleAppActionSchema,
-  z.object({ action: z.literal('update-all') }),
+  z.object({
+    action: z.literal('update-all'),
+    ceilings: z.array(z.object({ appId: appIdSchema, version: versionSchema })).optional(),
+  }),
 ]);
 export type AppAction = z.infer<typeof appActionSchema>;
 export const appsStatusSchema = z.object({
