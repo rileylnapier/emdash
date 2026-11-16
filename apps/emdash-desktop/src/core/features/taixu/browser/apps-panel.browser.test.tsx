@@ -3,6 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type { AppsStatus } from '../api/apps-contract';
+import { resetBothMacsForTests, updateBothMacs } from './apps-both-macs';
 import { AppsPanel } from './apps-panel';
 import '@emdash/ui/style.css';
 import './taixu-shell.css';
@@ -32,6 +33,7 @@ const status: AppsStatus = {
 };
 beforeEach(() => {
   vi.clearAllMocks();
+  resetBothMacsForTests();
   mocks.apps.mockResolvedValue(structuredClone(status));
   mocks.appAction.mockResolvedValue(undefined);
   mocks.localApps.mockRejectedValue(new Error('not available'));
@@ -320,8 +322,7 @@ it('compares this Mac with Studio and updates either one, or all apps on each', 
       ?.textContent
   ).toBe('Studio: Did not confirm restarting.');
   expect(
-    [...container.querySelectorAll('button')].find((b) => b.textContent === 'Update all on Studio')
-      ?.disabled
+    [...container.querySelectorAll('button')].find((b) => b.textContent === 'Only Studio')?.disabled
   ).toBe(true);
   if (import.meta.env.VITE_TAIXU_UPDATE_ALL_SCREENSHOT)
     await page.screenshot({ path: import.meta.env.VITE_TAIXU_UPDATE_ALL_SCREENSHOT });
@@ -332,7 +333,7 @@ it('compares this Mac with Studio and updates either one, or all apps on each', 
     build: 'f'.repeat(64),
     ceiling: '1.2.1',
   });
-  await page.getByRole('button', { name: 'Update all on this Mac' }).click();
+  await page.getByRole('button', { name: 'Only this Mac' }).click();
   // Studio's installed versions cap this Mac; Studio has no Scout version to pass.
   const call = mocks.localAppAction.mock.lastCall![0];
   expect(call.action).toBe('update-all');
@@ -345,7 +346,8 @@ it('shows one computer when this Mac is the selected one', async () => {
   mocks.localApps.mockResolvedValue(structuredClone(status));
   await render();
   expect(container.textContent).not.toContain('This Mac');
-  await page.getByRole('button', { name: 'Update all on Studio' }).click();
+  expect(container.textContent).not.toContain('both Macs');
+  await page.getByRole('button', { name: 'Update all apps on Studio' }).click();
   expect(mocks.appAction).toHaveBeenCalledExactlyOnceWith({ action: 'update-all' });
 });
 
@@ -392,8 +394,9 @@ it('summarises a finished Update all and labels each app without a computer name
     )
     .toBeVisible();
   expect(
-    [...container.querySelectorAll('button')].find((b) => b.textContent === 'Update all on Studio')
-      ?.disabled
+    [...container.querySelectorAll('button')].find(
+      (b) => b.textContent === 'Update all apps on Studio'
+    )?.disabled
   ).toBe(false);
 });
 
@@ -427,4 +430,65 @@ it('does not let this Mac update past the version Studio runs', async () => {
       )
     )
     .toBeVisible();
+});
+
+const job = (running: boolean, startedAt: string): AppsStatus['updateAll'] => ({
+  running,
+  startedAt,
+  finishedAt: running ? null : startedAt,
+  apps: [],
+});
+it('updates apps on Studio first, then this Mac up to Studio’s new versions', async () => {
+  const studio = structuredClone(status);
+  studio.updateAll = job(false, 'earlier run');
+  const studioAfter = structuredClone(status);
+  studioAfter.apps[4]!.version = '0.5.0';
+  studioAfter.updateAll = job(false, 'this run');
+  const laptop = structuredClone(status);
+  laptop.computer = 'Laptop';
+  const laptopAfter = structuredClone(laptop);
+  laptopAfter.updateAll = job(false, 'laptop run');
+  let studioStarted = false;
+  let laptopStarted = false;
+  mocks.apps.mockImplementation(async () => structuredClone(studioStarted ? studioAfter : studio));
+  mocks.localApps.mockImplementation(async () =>
+    structuredClone(laptopStarted ? laptopAfter : laptop)
+  );
+  mocks.appAction.mockImplementation(async () => {
+    // Laptop must not start before Studio has finished.
+    expect(laptopStarted).toBe(false);
+    studioStarted = true;
+  });
+  mocks.localAppAction.mockImplementation(async () => {
+    laptopStarted = true;
+  });
+  await render();
+  await expect
+    .element(
+      page.getByText("Studio first, then this Mac up to Studio's versions.", { exact: false })
+    )
+    .toBeVisible();
+  await page.getByRole('button', { name: 'Update apps on both Macs' }).click();
+  await expect
+    .element(page.getByText('Both Macs finished. See each app below for what changed.'))
+    .toBeVisible();
+  expect(mocks.appAction).toHaveBeenCalledExactlyOnceWith({ action: 'update-all' });
+  const local = mocks.localAppAction.mock.calls[0]![0];
+  expect(local.action).toBe('update-all');
+  // Capped at Studio's versions after its run, not before.
+  expect(local.ceilings).toContainEqual({ appId: 'wondercraft', version: '0.5.0' });
+});
+
+it('reports where a both-Macs run stopped', async () => {
+  mocks.apps.mockResolvedValue(structuredClone(status));
+  mocks.appAction.mockRejectedValue(new Error('Taixu is updating. Try again after it finishes.'));
+  await updateBothMacs(mocks, 1);
+  const laptop = structuredClone(status);
+  laptop.computer = 'Laptop';
+  mocks.localApps.mockResolvedValue(laptop);
+  await render();
+  await expect
+    .element(page.getByText('Stopped: Taixu is updating. Try again after it finishes.'))
+    .toBeVisible();
+  expect(mocks.localAppAction).not.toHaveBeenCalled();
 });

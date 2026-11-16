@@ -1,6 +1,32 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { AppAction, AppsStatus } from '../api/apps-contract';
 import { getTaixuClient } from '../api/browser/client';
+import {
+  bothMacsRun,
+  studioCeilings,
+  subscribeBothMacs,
+  updateBothMacs,
+  type BothMacsRun,
+} from './apps-both-macs';
+
+function BothMacsProgress({ run, studio }: { run: BothMacsRun | null; studio: AppsStatus | null }) {
+  if (!run) return null;
+  const job = studio?.updateAll;
+  const done = job ? job.apps.filter((e) => !['queued', 'working'].includes(e.status)).length : 0;
+  const text =
+    run.phase === 'studio'
+      ? `Step 1 of 2: updating apps on ${run.computer}${job?.running ? ` · ${done} of ${job.apps.length} done` : '…'}`
+      : run.phase === 'this-mac'
+        ? `Step 2 of 2: updating apps on this Mac, up to ${run.computer}'s versions…`
+        : run.phase === 'done'
+          ? `Both Macs finished. See each app below for what changed.`
+          : `Stopped: ${run.error}`;
+  return (
+    <p className={run.phase === 'failed' ? 'taixu-app-blockers' : 'taixu-app-meta'} role="status">
+      {text}
+    </p>
+  );
+}
 
 const labels = {
   running: 'Service running',
@@ -132,12 +158,9 @@ export function AppsPanel() {
   // Both lists come from one Mac when Studio is not selected.
   const twoMacs = !!status && !!local && local.computer !== status.computer;
   // This Mac never updates past what the selected Studio runs.
-  const ceilings = twoMacs
-    ? (status?.apps ?? []).flatMap((studioApp) => {
-        const version = installedVersion(studioApp);
-        return version ? [{ appId: studioApp.id, version }] : [];
-      })
-    : [];
+  const ceilings = twoMacs && status ? studioCeilings(status) : [];
+  const both = useSyncExternalStore(subscribeBothMacs, bothMacsRun);
+  const bothRunning = both?.phase === 'studio' || both?.phase === 'this-mac';
   const act = async (input: AppAction, where: 'selected' | 'local' = 'selected') => {
     setBusy(input.action === 'update-all' ? `all-${where}` : `${where}-${input.appId}`);
     setError('');
@@ -181,20 +204,40 @@ export function AppsPanel() {
           Refresh
         </button>
       </div>
+      {status && twoMacs && (
+        <div className="taixu-apps-update-both">
+          <button
+            disabled={
+              !!busy || bothRunning || !!status.updateAll?.running || !!local?.updateAll?.running
+            }
+            onClick={() => {
+              setError('');
+              void getTaixuClient().then((client) => updateBothMacs(client));
+            }}
+          >
+            Update apps on both Macs
+          </button>
+          <p className="taixu-app-meta">
+            {status.computer} first, then this Mac up to {status.computer}'s versions. Taixu itself
+            updates from Updates.
+          </p>
+          <BothMacsProgress run={both} studio={status} />
+        </div>
+      )}
       {status && (
         <div className="taixu-app-actions">
           <button
-            disabled={!!busy || !!status.updateAll?.running}
+            disabled={!!busy || bothRunning || !!status.updateAll?.running}
             onClick={() => void act({ action: 'update-all' })}
           >
-            Update all on {status.computer}
+            {twoMacs ? `Only ${status.computer}` : `Update all apps on ${status.computer}`}
           </button>
           {twoMacs && (
             <button
-              disabled={!!busy || !!local?.updateAll?.running}
+              disabled={!!busy || bothRunning || !!local?.updateAll?.running}
               onClick={() => void act({ action: 'update-all', ceilings }, 'local')}
             >
-              Update all on this Mac
+              Only this Mac
             </button>
           )}
         </div>
