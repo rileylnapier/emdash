@@ -330,9 +330,14 @@ it('compares this Mac with Studio and updates either one, or all apps on each', 
     appId: 'flow',
     action: 'update',
     build: 'f'.repeat(64),
+    ceiling: '1.2.1',
   });
   await page.getByRole('button', { name: 'Update all on this Mac' }).click();
-  expect(mocks.localAppAction).toHaveBeenLastCalledWith({ action: 'update-all' });
+  // Studio's installed versions cap this Mac; Studio has no Scout version to pass.
+  const call = mocks.localAppAction.mock.lastCall![0];
+  expect(call.action).toBe('update-all');
+  expect(call.ceilings).toContainEqual({ appId: 'flow', version: '1.2.1' });
+  expect(call.ceilings).toContainEqual({ appId: 'wondercraft', version: '0.4.1' });
   expect(mocks.appAction).not.toHaveBeenCalled();
 });
 
@@ -390,4 +395,36 @@ it('summarises a finished Update all and labels each app without a computer name
     [...container.querySelectorAll('button')].find((b) => b.textContent === 'Update all on Studio')
       ?.disabled
   ).toBe(false);
+});
+
+it('does not let this Mac update past the version Studio runs', async () => {
+  const studio = structuredClone(status);
+  studio.apps[4]!.version = '0.4.1';
+  const laptop = structuredClone(status);
+  laptop.computer = 'Laptop';
+  laptop.apps[4]!.version = '0.4.1';
+  laptop.apps[4]!.updates = {
+    supported: true,
+    configured: true,
+    busy: false,
+    phase: 'ready',
+    progress: 1,
+    release: { version: '0.5.0', build: 'a'.repeat(64) },
+    blockers: [],
+    message: null,
+  };
+  mocks.apps.mockResolvedValue(studio);
+  mocks.localApps.mockResolvedValue(laptop);
+  await render();
+  const card = page.getByRole('article', { name: 'Wondercraft', exact: true });
+  await expect
+    .element(card.getByRole('button', { name: 'Update this Mac to 0.5.0' }))
+    .toBeDisabled();
+  await expect
+    .element(
+      card.getByText(
+        'Studio has 0.4.1. Update Studio first so this Mac does not get ahead (0.5.0).'
+      )
+    )
+    .toBeVisible();
 });
