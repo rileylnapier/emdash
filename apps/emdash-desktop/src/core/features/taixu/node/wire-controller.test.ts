@@ -493,7 +493,7 @@ it('fails the receipt if the utility exits before confirming its save', async ()
 });
 
 async function headRequest(
-  action: 'send' | 'refresh' | 'image-context',
+  action: 'send' | 'refresh' | 'image-context' | 'archive',
   input: unknown,
   expiresAt = Date.now() + 60000
 ) {
@@ -766,4 +766,41 @@ it('answers for this Mac through an apps-only host while the Heads are not runni
   await holding;
   await expect(wire.client.localAppAction({ action: 'update-all' })).rejects.toThrow('updating');
   expect(mocks.fork).toHaveBeenCalledTimes(1);
+});
+
+it('archives merged linked work when Taixu asks, through Archive work, and refuses unlinked work', async () => {
+  await linkedWork();
+  const receipts: { status: string; message: string }[] = [];
+  worker.postMessage.mockImplementation((message) => {
+    if (message.type !== 'work-archive') return;
+    receipts.push(message.input);
+    queueMicrotask(() => worker.emit('message', { type: 'work-archive-result', id: message.id }));
+  });
+  mocks.archiveWork.mockResolvedValue({
+    archived: true,
+    cleaned: true,
+    message: 'Checkout removed.',
+  });
+  const context = 'Merged: https://github.com/o/r/pull/1. Archived automatically after merge.';
+  const done = await headRequest('archive', { taskId, projectId: 'project', context });
+  expect(done.result).toMatchObject({ archived: true, cleaned: true });
+  expect(mocks.archiveWork).toHaveBeenCalledWith({ taskId, projectId: 'project', context });
+  expect(receipts.map((r) => r.status)).toEqual(['pending', 'archived']);
+  mocks.archiveWork.mockClear();
+  const id = '00000000-0000-4000-8000-000000000001';
+  worker.emit('message', {
+    type: 'head-work-request',
+    id,
+    action: 'archive',
+    input: { taskId: 'other-task', projectId: 'project' },
+    expiresAt: Date.now() + 60000,
+  });
+  await vi.waitFor(() =>
+    expect(worker.postMessage).toHaveBeenCalledWith({
+      type: 'head-work-result',
+      id,
+      error: 'Work request unavailable.',
+    })
+  );
+  expect(mocks.archiveWork).not.toHaveBeenCalled();
 });
