@@ -57,6 +57,8 @@ export function createTaixuWireController({
   ) => Promise<{ bin: string; env: Record<string, string> }>;
 }) {
   let child: UtilityProcess | undefined;
+  // While Studio is selected the Heads do not run here; this host reports this Mac's apps.
+  let appsWorker: UtilityProcess | undefined;
   let url: string | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let connecting: Promise<{ url: string | null; error: string | null }> | undefined;
@@ -114,6 +116,42 @@ export function createTaixuWireController({
       })
     );
   const configFile = path.join(app.getPath('userData'), 'taixu.json');
+  // The Heads and the laptop-only apps host both hold app actions while Taixu updates itself.
+  function holdWorker(worker: UtilityProcess, hold: boolean) {
+    return new Promise<void>((resolve, reject) => {
+      const id = randomUUID();
+      const done = (error?: string) => {
+        clearTimeout(timeout);
+        worker.removeListener('message', onMessage);
+        worker.removeListener('exit', onExit);
+        if (error) reject(new Error(error));
+        else resolve();
+      };
+      const onExit = () => done('The Heads stopped before update readiness was confirmed.');
+      const onMessage = (message: unknown) => {
+        if (
+          message &&
+          typeof message === 'object' &&
+          'type' in message &&
+          message.type === 'update-held' &&
+          'id' in message &&
+          message.id === id
+        )
+          done('error' in message && typeof message.error === 'string' ? message.error : undefined);
+      };
+      const timeout = setTimeout(
+        () => done('Could not check the Heads. Restart Taixu before updating.'),
+        5000
+      );
+      worker.on('message', onMessage);
+      worker.once('exit', onExit);
+      try {
+        worker.postMessage({ type: 'update-hold', id, hold });
+      } catch {
+        done('Could not check the Heads. Restart Taixu before updating.');
+      }
+    });
+  }
   scope.add(
     registerHeadUpdateGuard(async (hold) => {
       if (hold && activeSubmissions)
@@ -122,51 +160,20 @@ export function createTaixuWireController({
       const previouslyHeld = updateHeld;
       // Block new approvals before awaiting the utility process acknowledgement.
       if (hold) updateHeld = true;
-      const worker = child;
-      if (!worker) {
-        updateHeld = hold;
-        return;
-      }
-      await new Promise<void>((resolve, reject) => {
-        const id = randomUUID();
-        const done = (error?: string) => {
-          clearTimeout(timeout);
-          worker.removeListener('message', onMessage);
-          worker.removeListener('exit', onExit);
-          if (error) {
-            updateHeld = previouslyHeld;
-            reject(new Error(error));
-          } else {
-            updateHeld = hold;
-            resolve();
-          }
-        };
-        const onExit = () => done('The Heads stopped before update readiness was confirmed.');
-        const onMessage = (message: unknown) => {
-          if (
-            message &&
-            typeof message === 'object' &&
-            'type' in message &&
-            message.type === 'update-held' &&
-            'id' in message &&
-            message.id === id
-          )
-            done(
-              'error' in message && typeof message.error === 'string' ? message.error : undefined
-            );
-        };
-        const timeout = setTimeout(
-          () => done('Could not check the Heads. Restart Taixu before updating.'),
-          5000
-        );
-        worker.on('message', onMessage);
-        worker.once('exit', onExit);
-        try {
-          worker.postMessage({ type: 'update-hold', id, hold });
-        } catch {
-          done('Could not check the Heads. Restart Taixu before updating.');
+      // A refusing worker keeps its previous state; release only those that accepted.
+      const accepted: UtilityProcess[] = [];
+      try {
+        for (const worker of [child, appsWorker]) {
+          if (!worker) continue;
+          await holdWorker(worker, hold);
+          accepted.push(worker);
         }
-      });
+        updateHeld = hold;
+      } catch (error) {
+        updateHeld = previouslyHeld;
+        for (const worker of accepted) await holdWorker(worker, previouslyHeld).catch(() => {});
+        throw error;
+      }
     })
   );
 
@@ -727,6 +734,37 @@ export function createTaixuWireController({
     }
   }
 
+  function localAppsHost(): UtilityProcess {
+    // Keep one hub per Mac once started, so an Update all job is never split.
+    if (appsWorker) return appsWorker;
+    if (child) return child;
+    const root =
+      app.isPackaged && !process.env.TAIXU_ROOT
+        ? path.join(process.resourcesPath, 'taixu-runtime')
+        : (process.env.TAIXU_ROOT ?? path.resolve(app.getAppPath(), '../../../..'));
+    const env = { ...process.env };
+    env.TAIXU_APP_SERVICES = app.isPackaged && process.platform === 'darwin' ? '1' : '0';
+    env.TAIXU_APP_BUNDLE = app.isPackaged ? path.resolve(app.getPath('exe'), '../../..') : '';
+    delete env.ELECTRON_RUN_AS_NODE;
+    delete env.NODE_OPTIONS;
+    const worker = utilityProcess.fork(path.join(root, 'apps/taixu/server/apps-host.mjs'), [], {
+      cwd: root,
+      env,
+      stdio: 'ignore',
+      serviceName: 'Taixu Apps',
+    });
+    appsWorker = worker;
+    worker.once('exit', () => {
+      if (appsWorker === worker) appsWorker = undefined;
+    });
+    if (updateHeld) worker.postMessage({ type: 'update-hold', id: randomUUID(), hold: true });
+    return worker;
+  }
+  scope.add(() => {
+    appsWorker?.postMessage({ type: 'stop' });
+    appsWorker = undefined;
+  });
+
   return createController(taixuContract, {
     apps: () => {
       if (!child || !url) throw new Error('Reconnect to Taixu to check its apps.');
@@ -738,6 +776,16 @@ export function createTaixuWireController({
       activeSubmissions++;
       try {
         return await requestApps(child, input);
+      } finally {
+        activeSubmissions--;
+      }
+    },
+    localApps: () => requestApps(localAppsHost()),
+    localAppAction: async (input) => {
+      if (updateHeld) throw new Error('Reconnect after Taixu finishes updating.');
+      activeSubmissions++;
+      try {
+        return await requestApps(localAppsHost(), input);
       } finally {
         activeSubmissions--;
       }

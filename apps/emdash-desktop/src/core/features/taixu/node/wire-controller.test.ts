@@ -740,3 +740,30 @@ it('allows an unlinked native task to archive with context without merging or a 
     context: 'Decision and next step.',
   });
 });
+it('answers for this Mac through an apps-only host while the Heads are not running here', async () => {
+  const listed = wire.client.localApps({});
+  await vi.waitFor(() =>
+    expect(worker.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'apps-request' })
+    )
+  );
+  expect(mocks.fork).toHaveBeenCalledExactlyOnceWith(
+    path.join(root, 'apps/taixu/server/apps-host.mjs'),
+    [],
+    expect.objectContaining({ serviceName: 'Taixu Apps' })
+  );
+  const request = worker.postMessage.mock.calls.find(([m]) => m.type === 'apps-request')?.[0];
+  worker.emit('message', {
+    type: 'apps-result',
+    id: request.id,
+    result: { computer: 'Laptop', apps: [] },
+  });
+  await expect(listed).resolves.toEqual({ computer: 'Laptop', apps: [] });
+  // Taixu's own update holds the apps host too, and refuses new actions meanwhile.
+  const holding = mocks.updateGuard(true);
+  const hold = worker.postMessage.mock.calls.find(([m]) => m.type === 'update-hold')?.[0];
+  worker.emit('message', { type: 'update-held', id: hold.id });
+  await holding;
+  await expect(wire.client.localAppAction({ action: 'update-all' })).rejects.toThrow('updating');
+  expect(mocks.fork).toHaveBeenCalledTimes(1);
+});

@@ -1,19 +1,39 @@
 import { z } from 'zod';
 
-export const appActionSchema = z.object({
-  appId: z.enum(['flow', 'bloom', 'taste', 'jam', 'wondercraft', 'scout']),
+const appIdSchema = z.enum(['flow', 'bloom', 'taste', 'jam', 'wondercraft', 'scout']);
+const singleAppActionSchema = z.object({
+  appId: appIdSchema,
   build: z
     .string()
     .regex(/^[a-f0-9]{64}$/)
     .optional(),
   action: z.enum(['start', 'open', 'stop', 'check-update', 'update', 'install']),
 });
+// Update all runs one app at a time on the computer that receives it.
+export const appActionSchema = z.union([
+  singleAppActionSchema,
+  z.object({ action: z.literal('update-all') }),
+]);
 export type AppAction = z.infer<typeof appActionSchema>;
 export const appsStatusSchema = z.object({
   computer: z.string(),
+  updateAll: z
+    .object({
+      running: z.boolean(),
+      current: appIdSchema.nullable(),
+      results: z.array(
+        z.object({
+          appId: appIdSchema,
+          outcome: z.enum(['updated', 'current', 'skipped', 'failed']),
+          message: z.string(),
+        })
+      ),
+    })
+    .nullable()
+    .optional(),
   apps: z.array(
     z.object({
-      id: z.enum(['flow', 'bloom', 'taste', 'jam', 'wondercraft', 'scout']),
+      id: appIdSchema,
       name: z.string(),
       detail: z.string(),
       supported: z.boolean(),

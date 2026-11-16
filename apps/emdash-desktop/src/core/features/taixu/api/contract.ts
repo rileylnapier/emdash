@@ -95,6 +95,13 @@ export type WorkArchiveInput = z.infer<typeof archiveInputSchema>;
 export const taixuContract = defineContract({
   apps: procedure({ input: z.object({}), output: appsStatusSchema }),
   appAction: procedure({ input: appActionSchema, output: appsStatusSchema, callTimeoutMs: 90000 }),
+  // Always this Mac, even while Studio is selected, so both Macs' versions can be compared.
+  localApps: procedure({ input: z.object({}), output: appsStatusSchema }),
+  localAppAction: procedure({
+    input: appActionSchema,
+    output: appsStatusSchema,
+    callTimeoutMs: 90000,
+  }),
   readArchive: procedure({ input: workTargetSchema, output: workArchiveNoteSchema.nullable() }),
   listArchives: procedure({
     input: z.object({ offset: z.number().int().min(0).default(0) }),
