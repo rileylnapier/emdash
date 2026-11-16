@@ -115,8 +115,10 @@ export function AppsPanel() {
         const canInstall = update?.release && ['ready', 'blocked'].includes(update.phase);
         const available = ['running', 'idle', 'stopped'].includes(app.state);
         const active = app.state === 'running' || app.state === 'idle';
-        const stateLabel =
-          app.id === 'flow' && active
+        const missing = app.state === 'needs-install' && !!app.install;
+        const stateLabel = missing
+          ? 'Not installed'
+          : app.id === 'flow' && active
             ? app.state === 'running'
               ? 'Sharing library'
               : 'Sharing off'
@@ -179,6 +181,16 @@ export function AppsPanel() {
               <p className="taixu-app-meta">
                 Update once from this app’s Settings → Updates to enable hub updates.
               </p>
+            )}
+            {missing && app.install?.version && (
+              <div className="taixu-app-actions">
+                <button
+                  disabled={!!busy}
+                  onClick={() => void act({ appId: app.id, action: 'install' })}
+                >
+                  Install {app.install.version} on {status.computer}
+                </button>
+              </div>
             )}
             {available && (
               <div className="taixu-app-actions">
