@@ -65,6 +65,7 @@ import {
 import { createSessionLifecycle } from '#services/session-lifecycle/node';
 import { TuiAgentStates } from './agent-state';
 import { spillLargePrompt, type PromptSpillResult } from './prompt-spill';
+import { isTerminalReport } from './terminal-reports';
 import type { TuiAgentsRuntimeDeps, TuiSessionConfig } from './types';
 
 const RESUME_FALLBACK_WINDOW_MS = 3_000;
@@ -438,6 +439,12 @@ export class TuiAgentsRuntime {
   sendInput(conversationId: string, data: string): Result<void, TuiInputError> {
     const active = this.sessions.get(conversationId);
     if (!active?.pty) return err({ type: 'not-found', conversationId });
+    if (isTerminalReport(data)) {
+      // The terminal answering by itself is not the user typing: forward it unchanged, but
+      // keep it out of input activity so a finished agent still reads as idle.
+      active.pty.write(data);
+      return ok(undefined);
+    }
     active.inputRevision = (active.inputRevision ?? 0) + 1;
     active.pty.write(data);
     this.lifecycle.recordInput(conversationId);

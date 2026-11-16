@@ -186,6 +186,61 @@ describe('TuiAgentsRuntime', () => {
     }
   );
 
+  it('keeps a finished agent idle when only the terminal answers by itself', async () => {
+    const clock = createManualClock();
+    const { runtime, spawner } = createRuntime({ clock });
+    try {
+      await runtime.startSession(startInput({ providerId: 'claude' }));
+      await clock.advanceBy(10);
+      runtime['agentStates'].applyCanonicalEvent('conversation-1', 'claude', {
+        kind: 'status',
+        type: 'stop',
+      });
+      await clock.advanceBy(10);
+      const list = () => peek(runtime['sessionsList'].states.list);
+      const inputBefore = list()['conversation-1']?.lastInputAt;
+      // Opening the task replays output (xterm answers old queries); clicks send mouse reports.
+      for (const reply of [
+        '\x1b[I',
+        '\x1b[<0;3;4M\x1b[<0;3;4m',
+        '\x1b]11;rgb:0/0/0\x07',
+        '\x1b[6;10R',
+      ])
+        runtime.sendInput('conversation-1', reply);
+      expect(spawner.processes[0]!.writes).toEqual(
+        expect.arrayContaining(['\x1b[I', '\x1b[<0;3;4M\x1b[<0;3;4m', '\x1b]11;rgb:0/0/0\x07'])
+      );
+      expect(list()['conversation-1']?.lastInputAt).toBe(inputBefore);
+      expect(runtime['agentStates'].current('conversation-1')).toMatchObject({
+        status: 'completed',
+      });
+      expect(await runtime.sendFollowup('conversation-1', 'Changes')).toEqual(
+        ok({ status: 'sent' })
+      );
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it('still treats typing after completion as a possible draft', async () => {
+    const clock = createManualClock();
+    const { runtime } = createRuntime({ clock });
+    try {
+      await runtime.startSession(startInput({ providerId: 'claude' }));
+      await clock.advanceBy(10);
+      runtime['agentStates'].applyCanonicalEvent('conversation-1', 'claude', {
+        kind: 'status',
+        type: 'stop',
+      });
+      await clock.advanceBy(10);
+      runtime.sendInput('conversation-1', '\x1b[Ia');
+      const result = await runtime.sendFollowup('conversation-1', 'Changes');
+      expect(result.success && result.data.status === 'sent').toBe(false);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
   it.each(['input', 'permission', 'exit'])(
     'does not press Enter if %s changes after pasting',
     async (change) => {
