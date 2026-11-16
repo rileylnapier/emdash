@@ -3,11 +3,14 @@ import type { AppAction, AppsStatus } from '../api/apps-contract';
 import { getTaixuClient } from '../api/browser/client';
 import {
   bothMacsRun,
+  bothMacsRunning,
   studioCeilings,
   subscribeBothMacs,
   updateBothMacs,
   type BothMacsRun,
 } from './apps-both-macs';
+import { TaixuUpdateCard } from './update-card';
+import { sharedUpdates } from './update-controls';
 
 function BothMacsProgress({ run, studio }: { run: BothMacsRun | null; studio: AppsStatus | null }) {
   if (!run) return null;
@@ -15,14 +18,23 @@ function BothMacsProgress({ run, studio }: { run: BothMacsRun | null; studio: Ap
   const done = job ? job.apps.filter((e) => !['queued', 'working'].includes(e.status)).length : 0;
   const text =
     run.phase === 'studio'
-      ? `Step 1 of 2: updating apps on ${run.computer}${job?.running ? ` · ${done} of ${job.apps.length} done` : '…'}`
+      ? `Step 1 of 3: updating apps on ${run.computer}${job?.running ? ` · ${done} of ${job.apps.length} done` : '…'}`
       : run.phase === 'this-mac'
-        ? `Step 2 of 2: updating apps on this Mac, up to ${run.computer}'s versions…`
-        : run.phase === 'done'
-          ? `Both Macs finished. See each app below for what changed.`
-          : `Stopped: ${run.error}`;
+        ? `Step 2 of 3: updating apps on this Mac, up to ${run.computer}'s versions…`
+        : run.phase === 'taixu'
+          ? 'Step 3 of 3: updating Taixu on both Macs…'
+          : run.phase === 'failed'
+            ? `Stopped: ${run.error}`
+            : run.taixu === 'current'
+              ? 'Everything is up to date. See each app below for what changed.'
+              : run.taixu === 'restarting'
+                ? 'Apps finished. Taixu is restarting to finish its update.'
+                : run.taixu === 'updated'
+                  ? `Everything finished. Taixu: ${run.message}`
+                  : `Apps finished. Taixu is waiting: ${run.message}`;
+  const problem = run.phase === 'failed' || (run.phase === 'done' && run.taixu === 'blocked');
   return (
-    <p className={run.phase === 'failed' ? 'taixu-app-blockers' : 'taixu-app-meta'} role="status">
+    <p className={problem ? 'taixu-app-blockers' : 'taixu-app-meta'} role="status">
       {text}
     </p>
   );
@@ -160,7 +172,7 @@ export function AppsPanel() {
   // This Mac never updates past what the selected Studio runs.
   const ceilings = twoMacs && status ? studioCeilings(status) : [];
   const both = useSyncExternalStore(subscribeBothMacs, bothMacsRun);
-  const bothRunning = both?.phase === 'studio' || both?.phase === 'this-mac';
+  const bothRunning = bothMacsRunning(both);
   const act = async (input: AppAction, where: 'selected' | 'local' = 'selected') => {
     setBusy(input.action === 'update-all' ? `all-${where}` : `${where}-${input.appId}`);
     setError('');
@@ -204,6 +216,7 @@ export function AppsPanel() {
           Refresh
         </button>
       </div>
+      <TaixuUpdateCard />
       {status && twoMacs && (
         <div className="taixu-apps-update-both">
           <button
@@ -212,14 +225,16 @@ export function AppsPanel() {
             }
             onClick={() => {
               setError('');
-              void getTaixuClient().then((client) => updateBothMacs(client));
+              void getTaixuClient().then((client) =>
+                updateBothMacs(client, { taixu: sharedUpdates() })
+              );
             }}
           >
-            Update apps on both Macs
+            Update everything
           </button>
           <p className="taixu-app-meta">
-            {status.computer} first, then this Mac up to {status.computer}'s versions. Taixu itself
-            updates from Updates.
+            {status.computer}'s apps, then this Mac's apps up to {status.computer}'s versions, then
+            Taixu.
           </p>
           <BothMacsProgress run={both} studio={status} />
         </div>
