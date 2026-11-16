@@ -14,14 +14,6 @@ const labels = {
 
 type App = AppsStatus['apps'][number];
 type UpdateAll = AppsStatus['updateAll'];
-const appNames: Record<App['id'], string> = {
-  flow: 'Flow',
-  bloom: 'Bloom',
-  taste: 'Taste',
-  jam: 'Jam',
-  wondercraft: 'Wondercraft',
-  scout: 'Scout',
-};
 // Apps whose laptop connects to the Studio's backend need the same version on both.
 const matchingRequired = new Set<App['id']>(['flow', 'wondercraft']);
 
@@ -34,20 +26,51 @@ function compareVersions(a: string, b: string) {
 const installedVersion = (app?: App) =>
   app && app.state !== 'needs-install' && app.state !== 'planned' ? app.version : null;
 
-function UpdateAllProgress({ job, label }: { job: UpdateAll; label: string }) {
+type UpdateEntry = NonNullable<UpdateAll>['apps'][number];
+const finishedLabels: Record<string, string> = {
+  updated: 'updated',
+  current: 'up to date',
+  skipped: 'skipped',
+  failed: 'failed',
+};
+
+function UpdateAllSummary({ job, label }: { job: UpdateAll; label: string }) {
   if (!job) return null;
+  const done = job.apps.filter((entry) => !['queued', 'working'].includes(entry.status));
+  const counts = Object.entries(finishedLabels)
+    .map(
+      ([status, text]) => [done.filter((entry) => entry.status === status).length, text] as const
+    )
+    .filter(([count]) => count > 0)
+    .map(([count, text]) => `${count} ${text}`)
+    .join(', ');
   return (
-    <div className="taixu-app-update" aria-label={`Update all ${label}`} aria-live="polite">
-      <p className="taixu-app-meta">
-        {job.running
-          ? `Updating all ${label}${job.current ? ` · ${appNames[job.current]}…` : '…'}`
-          : `Update all ${label} finished`}
+    <p className="taixu-app-meta" aria-live="polite">
+      {job.running
+        ? `Updating all ${label} · ${done.length} of ${job.apps.length} done`
+        : `Update all ${label} finished${counts ? ` · ${counts}` : ''}`}
+    </p>
+  );
+}
+
+function UpdateStatus({ entry, label }: { entry?: UpdateEntry; label: string | null }) {
+  if (!entry) return null;
+  const prefix = label ? `${label}: ` : '';
+  const text =
+    entry.status === 'queued'
+      ? 'Waiting to update…'
+      : entry.status === 'working'
+        ? `${entry.step ?? 'Working…'}${entry.progress != null ? ` ${Math.round(entry.progress * 100)}%` : ''}`
+        : (entry.message ?? finishedLabels[entry.status]);
+  return (
+    <div className="taixu-app-update" data-outcome={entry.status} aria-live="polite">
+      <p className={entry.status === 'failed' ? 'taixu-app-blockers' : 'taixu-app-meta'}>
+        {prefix}
+        {text}
       </p>
-      {job.results.map((result) => (
-        <p className="taixu-app-meta" key={result.appId} data-outcome={result.outcome}>
-          {appNames[result.appId]}: {result.message}
-        </p>
-      ))}
+      {entry.status === 'working' && entry.progress != null && (
+        <progress max={1} value={entry.progress} aria-label={`${prefix}${entry.step ?? ''}`} />
+      )}
     </div>
   );
 }
@@ -169,8 +192,8 @@ export function AppsPanel() {
           )}
         </div>
       )}
-      {status && <UpdateAllProgress job={status.updateAll} label={`on ${status.computer}`} />}
-      {twoMacs && <UpdateAllProgress job={local?.updateAll} label="on this Mac" />}
+      {status && <UpdateAllSummary job={status.updateAll} label={`on ${status.computer}`} />}
+      {twoMacs && <UpdateAllSummary job={local?.updateAll} label="on this Mac" />}
       <p className="taixu-apps-intro">
         Run apps on this computer without keeping their windows open. Services keep running when you
         close Taixu. Laptop access depends on each app.
@@ -231,6 +254,16 @@ export function AppsPanel() {
                   : `${status.computer} is behind this Mac.`}
                 {matchingRequired.has(app.id) && ' They need the same version to connect.'}
               </p>
+            )}
+            <UpdateStatus
+              entry={status.updateAll?.apps.find((entry) => entry.appId === app.id)}
+              label={twoMacs ? status.computer : null}
+            />
+            {twoMacs && (
+              <UpdateStatus
+                entry={local?.updateAll?.apps.find((entry) => entry.appId === app.id)}
+                label="This Mac"
+              />
             )}
             {active && (
               <p className="taixu-app-meta">

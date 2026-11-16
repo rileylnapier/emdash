@@ -238,8 +238,32 @@ it('compares this Mac with Studio and updates either one, or all apps on each', 
   studio.apps[4]!.version = '0.4.1';
   studio.updateAll = {
     running: true,
-    current: 'jam',
-    results: [{ appId: 'flow', outcome: 'updated', message: 'Updated 1.2.0 → 1.2.1.' }],
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    apps: [
+      {
+        appId: 'flow',
+        status: 'updated',
+        step: null,
+        progress: null,
+        message: 'Updated 1.2.0 → 1.2.1.',
+      },
+      {
+        appId: 'jam',
+        status: 'working',
+        step: 'Downloading 0.5.0…',
+        progress: 0.42,
+        message: null,
+      },
+      { appId: 'scout', status: 'queued', step: null, progress: null, message: null },
+      {
+        appId: 'bloom',
+        status: 'failed',
+        step: null,
+        progress: null,
+        message: 'Did not confirm restarting.',
+      },
+    ],
   };
   const laptop = structuredClone(status);
   laptop.computer = 'Laptop';
@@ -277,12 +301,30 @@ it('compares this Mac with Studio and updates either one, or all apps on each', 
         .getByText('This Mac not installed · Studio 0.3.0')
     )
     .toBeVisible();
-  await expect.element(page.getByText('Updating all on Studio · Jam…')).toBeVisible();
-  await expect.element(page.getByText('Flow: Updated 1.2.0 → 1.2.1.')).toBeVisible();
+  await expect.element(page.getByText('Updating all on Studio · 2 of 4 done')).toBeVisible();
+  await expect.element(flow.getByText('Studio: Updated 1.2.0 → 1.2.1.')).toBeVisible();
+  const jam = page.getByRole('article', { name: 'Jam', exact: true });
+  await expect.element(jam.getByText('Studio: Downloading 0.5.0… 42%')).toBeVisible();
+  expect(container.querySelector<HTMLProgressElement>('[aria-label="Jam"] progress')?.value).toBe(
+    0.42
+  );
+  await expect
+    .element(
+      page
+        .getByRole('article', { name: 'Scout', exact: true })
+        .getByText('Studio: Waiting to update…')
+    )
+    .toBeVisible();
+  expect(
+    container.querySelector('[aria-label="Bloom"] [data-outcome="failed"] .taixu-app-blockers')
+      ?.textContent
+  ).toBe('Studio: Did not confirm restarting.');
   expect(
     [...container.querySelectorAll('button')].find((b) => b.textContent === 'Update all on Studio')
       ?.disabled
   ).toBe(true);
+  if (import.meta.env.VITE_TAIXU_UPDATE_ALL_SCREENSHOT)
+    await page.screenshot({ path: import.meta.env.VITE_TAIXU_UPDATE_ALL_SCREENSHOT });
   await flow.getByRole('button', { name: 'Update this Mac to 1.2.1' }).click();
   expect(mocks.localAppAction).toHaveBeenCalledExactlyOnceWith({
     appId: 'flow',
@@ -300,4 +342,52 @@ it('shows one computer when this Mac is the selected one', async () => {
   expect(container.textContent).not.toContain('This Mac');
   await page.getByRole('button', { name: 'Update all on Studio' }).click();
   expect(mocks.appAction).toHaveBeenCalledExactlyOnceWith({ action: 'update-all' });
+});
+
+it('summarises a finished Update all and labels each app without a computer name on one Mac', async () => {
+  const one = structuredClone(status);
+  one.updateAll = {
+    running: false,
+    startedAt: new Date().toISOString(),
+    finishedAt: new Date().toISOString(),
+    apps: [
+      {
+        appId: 'flow',
+        status: 'updated',
+        step: null,
+        progress: null,
+        message: 'Updated 1.2.0 → 1.3.0.',
+      },
+      {
+        appId: 'jam',
+        status: 'current',
+        step: null,
+        progress: null,
+        message: 'Up to date (0.5.0).',
+      },
+      {
+        appId: 'taste',
+        status: 'skipped',
+        step: null,
+        progress: null,
+        message: 'Set up its Settings → Updates first.',
+      },
+    ],
+  };
+  mocks.apps.mockResolvedValue(one);
+  await render();
+  await expect
+    .element(page.getByText('Update all on Studio finished · 1 updated, 1 up to date, 1 skipped'))
+    .toBeVisible();
+  await expect
+    .element(
+      page
+        .getByRole('article', { name: 'Taste', exact: true })
+        .getByText('Set up its Settings → Updates first.', { exact: true })
+    )
+    .toBeVisible();
+  expect(
+    [...container.querySelectorAll('button')].find((b) => b.textContent === 'Update all on Studio')
+      ?.disabled
+  ).toBe(false);
 });
