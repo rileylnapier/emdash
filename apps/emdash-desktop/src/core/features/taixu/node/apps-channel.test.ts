@@ -20,6 +20,34 @@ it('matches request IDs, validates status and removes listeners after completion
   expect(worker.listenerCount('message')).toBe(0);
   expect(worker.listenerCount('exit')).toBe(0);
 });
+it('accepts apps the page has not seen before, such as a newly added hub app', async () => {
+  const worker = new Worker();
+  const pending = requestApps(worker.handle());
+  const app = {
+    id: 'bonsai',
+    name: 'Bonsai',
+    detail: 'Money',
+    supported: true,
+    state: 'stopped',
+    endpoint: null,
+    windowOpen: false,
+    blockers: [],
+    version: '0.1.0',
+  };
+  worker.emit('message', {
+    type: 'apps-result',
+    id: worker.postMessage.mock.calls[0]![0].id,
+    result: { computer: 'Studio', apps: [app] },
+  });
+  await expect(pending).resolves.toMatchObject({ apps: [{ id: 'bonsai' }] });
+  const bad = requestApps(worker.handle());
+  worker.emit('message', {
+    type: 'apps-result',
+    id: worker.postMessage.mock.calls[1]![0].id,
+    result: { computer: 'Studio', apps: [{ ...app, id: '../Bonsai' }] },
+  });
+  await expect(bad).rejects.toThrow('unreadable');
+});
 it('treats malformed status and worker disconnects as failures without retrying actions', async () => {
   const worker = new Worker();
   const malformed = requestApps(worker.handle());

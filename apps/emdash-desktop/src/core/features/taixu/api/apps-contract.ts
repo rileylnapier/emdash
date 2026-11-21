@@ -1,6 +1,8 @@
 import { z } from 'zod';
 
-const appIdSchema = z.enum(['flow', 'bloom', 'taste', 'jam', 'wondercraft', 'scout']);
+// Any app the hub reports (LoveLife's packages/desktop-runtime/mac-services.cjs catalog). The hub validates every action
+// against that catalog, so the page doesn't keep a second list that a newly added app would break.
+const appIdSchema = z.string().regex(/^[a-z]{1,32}$/);
 const versionSchema = z.string().regex(/^\d+\.\d+\.\d+$/);
 const singleAppActionSchema = z.object({
   appId: appIdSchema,
