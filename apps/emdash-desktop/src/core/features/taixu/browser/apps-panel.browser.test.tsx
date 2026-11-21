@@ -14,6 +14,10 @@ const mocks = vi.hoisted(() => ({
   appAction: vi.fn(),
   localApps: vi.fn(),
   localAppAction: vi.fn(),
+  appRelease: vi.fn(),
+  appChunk: vi.fn(),
+  localAppReceive: vi.fn(),
+  localAppInstall: vi.fn(),
 }));
 vi.mock('../api/browser/client', () => ({ getTaixuClient: async () => mocks }));
 const taixu = vi.hoisted(() => ({
@@ -278,6 +282,47 @@ it('installs a missing app from the release this computer published', async () =
   expect(container.querySelector('[aria-label="Taste"] button')).toBeNull();
 });
 
+it('installs an app this Mac is missing from Studio’s published release, and lists an app it has not seen before', async () => {
+  const studio = structuredClone(status);
+  studio.apps.push({ ...studio.apps[5]!, id: 'bonsai', name: 'Bonsai', detail: 'Money on Studio' });
+  const mine = structuredClone(studio);
+  mine.computer = 'Laptop';
+  mine.apps[6] = {
+    ...mine.apps[6]!,
+    state: 'needs-install',
+    version: null,
+    install: { version: null },
+  };
+  mocks.apps.mockResolvedValue(studio);
+  mocks.localApps.mockResolvedValue(mine);
+  const release = {
+    appId: 'bonsai',
+    build: 'b'.repeat(64),
+    sha256: 'c'.repeat(64),
+    version: '0.1.0',
+    size: 10,
+  };
+  mocks.appRelease.mockResolvedValue(release);
+  mocks.appChunk.mockResolvedValue('AAAA');
+  mocks.localAppReceive.mockResolvedValue({ received: 10 });
+  mocks.localAppInstall.mockResolvedValue(null);
+  await render();
+  const card = page.getByRole('article', { name: 'Bonsai', exact: true });
+  await expect.element(card.getByText('This Mac not installed · Studio 0.3.0')).toBeVisible();
+  await card.getByRole('button', { name: 'Install on this Mac' }).click();
+  await vi.waitFor(() => expect(mocks.localAppInstall).toHaveBeenCalledExactlyOnceWith(release));
+  expect(mocks.appChunk).toHaveBeenCalledExactlyOnceWith({
+    appId: 'bonsai',
+    build: release.build,
+    offset: 0,
+  });
+  expect(mocks.localAppReceive).toHaveBeenCalledExactlyOnceWith({
+    ...release,
+    offset: 0,
+    data: 'AAAA',
+  });
+  expect(mocks.localAppAction).not.toHaveBeenCalled();
+});
 it('compares this Mac with Studio and updates either one, or all apps on each', async () => {
   const studio = structuredClone(status);
   studio.apps[0]!.version = '1.2.1';

@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import type { UtilityProcess } from 'electron';
 import { afterEach, expect, it, vi } from 'vitest';
-import { requestApps } from './apps-channel';
+import { callApps, requestApps } from './apps-channel';
 class Worker extends EventEmitter {
   postMessage = vi.fn();
   handle() {
@@ -73,5 +73,26 @@ it('reports uncertainty on timeout and never resubmits a service action', async 
   await vi.advanceTimersByTimeAsync(85000);
   await rejected;
   expect(worker.postMessage).toHaveBeenCalledTimes(1);
+  expect(worker.listenerCount('message')).toBe(0);
+});
+
+it('sends one transfer step to the hub, matches its reply and reports its errors', async () => {
+  const worker = new Worker();
+  const pending = callApps(worker.handle(), 'release', { appId: 'bonsai' });
+  const sent = worker.postMessage.mock.calls[0]![0];
+  expect(sent).toMatchObject({ type: 'apps-call', method: 'release', input: { appId: 'bonsai' } });
+  worker.emit('message', { type: 'apps-call-result', id: 'other', result: 1 });
+  worker.emit('message', { type: 'apps-call-result', id: sent.id, result: { version: '0.1.0' } });
+  await expect(pending).resolves.toEqual({ version: '0.1.0' });
+  const failing = callApps(worker.handle(), 'install', {});
+  worker.emit('message', {
+    type: 'apps-call-result',
+    id: worker.postMessage.mock.calls[1]![0].id,
+    error: 'same developer',
+  });
+  await expect(failing).rejects.toThrow('same developer');
+  const lost = callApps(worker.handle(), 'chunk', {});
+  worker.emit('exit');
+  await expect(lost).rejects.toThrow('Try installing again');
   expect(worker.listenerCount('message')).toBe(0);
 });

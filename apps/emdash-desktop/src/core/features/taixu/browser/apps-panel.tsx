@@ -9,6 +9,7 @@ import {
   updateBothMacs,
   type BothMacsRun,
 } from './apps-both-macs';
+import { installFromStudio } from './apps-install';
 import { TaixuUpdateCard } from './update-card';
 import { sharedUpdates } from './update-controls';
 
@@ -173,6 +174,28 @@ export function AppsPanel() {
   const ceilings = twoMacs && status ? studioCeilings(status) : [];
   const both = useSyncExternalStore(subscribeBothMacs, bothMacsRun);
   const bothRunning = bothMacsRunning(both);
+  const [installing, setInstalling] = useState<{ appId: string; percent: number } | null>(null);
+  // Install an app on this Mac from the selected Studio's published release.
+  const installHere = async (appId: string) => {
+    setBusy(`local-${appId}`);
+    setError('');
+    setInstalling({ appId, percent: 0 });
+    try {
+      const client = await getTaixuClient();
+      await installFromStudio(client, appId, (percent) => {
+        if (mounted.current) setInstalling({ appId, percent });
+      });
+    } catch (cause) {
+      if (mounted.current)
+        setError(cause instanceof Error ? cause.message : 'The install did not finish. Try again.');
+    } finally {
+      if (mounted.current) {
+        setInstalling(null);
+        setBusy(null);
+        await refresh();
+      }
+    }
+  };
   const act = async (input: AppAction, where: 'selected' | 'local' = 'selected') => {
     setBusy(input.action === 'update-all' ? `all-${where}` : `${where}-${input.appId}`);
     setError('');
@@ -431,6 +454,17 @@ export function AppsPanel() {
                     Stop service
                   </button>
                 )}
+              </div>
+            )}
+            {twoMacs && mine?.state === 'needs-install' && (
+              <div className="taixu-app-actions">
+                <button disabled={!!busy} onClick={() => void installHere(app.id)}>
+                  {installing?.appId === app.id
+                    ? installing.percent < 100
+                      ? `Copying from ${status.computer} · ${installing.percent}%`
+                      : 'Checking and installing…'
+                    : 'Install on this Mac'}
+                </button>
               </div>
             )}
             {twoMacs && mine && ['running', 'idle', 'stopped'].includes(mine.state) && (

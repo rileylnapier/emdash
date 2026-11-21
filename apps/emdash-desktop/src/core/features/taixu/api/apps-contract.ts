@@ -93,3 +93,29 @@ export const appsStatusSchema = z.object({
   ),
 });
 export type AppsStatus = z.infer<typeof appsStatusSchema>;
+
+// Installing on the laptop from the Studio's published release. The Studio describes and serves it in pieces; this Mac
+// reassembles and installs it after the same checks as a local install (checksum, Apple signature, Taixu's team,
+// bundle ID, hub marker and version).
+const hex64 = z.string().regex(/^[a-f0-9]{64}$/);
+export const appReleaseSchema = z.object({
+  appId: appIdSchema,
+  build: hex64,
+  sha256: hex64,
+  version: versionSchema,
+  size: z
+    .number()
+    .int()
+    .positive()
+    .max(2 * 1024 ** 3),
+});
+export type AppRelease = z.infer<typeof appReleaseSchema>;
+export const appChunkInputSchema = z.object({
+  appId: appIdSchema,
+  build: hex64,
+  offset: z.number().int().min(0),
+});
+export const appReceiveInputSchema = appReleaseSchema.extend({
+  offset: z.number().int().min(0),
+  data: z.string().max(400 * 1024),
+});

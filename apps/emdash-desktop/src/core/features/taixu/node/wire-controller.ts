@@ -12,6 +12,7 @@ import type { AgentEvent } from '@core/primitives/agents/api/agent-events';
 import type { Conversation } from '@core/primitives/conversations/api';
 import type { Project } from '@core/primitives/projects/api';
 import type { CreateTaskParams } from '@core/primitives/tasks/api';
+import type { AppRelease } from '../api/apps-contract';
 import {
   taixuContract,
   followupReceiptSchema,
@@ -27,7 +28,7 @@ import {
   type WorkArchiveInput,
   type MergeReceiptInput,
 } from '../api/contract';
-import { requestApps } from './apps-channel';
+import { callApps, requestApps } from './apps-channel';
 import { prepareDataHome } from './data-home';
 import { taixuWorkEvents } from './event-host';
 import { HeadTaskUnavailable, headTaskErrorMessage, type HeadTaskRequest } from './head-task';
@@ -977,6 +978,28 @@ export function createTaixuWireController({
       activeSubmissions++;
       try {
         return await requestApps(localAppsHost(), input);
+      } finally {
+        activeSubmissions--;
+      }
+    },
+    appRelease: ({ appId }) => {
+      if (!child || !url) throw new Error('Reconnect to Taixu to check its apps.');
+      return callApps(child, 'release', { appId }) as Promise<AppRelease | null>;
+    },
+    appChunk: (input) => {
+      if (!child || !url) throw new Error('Reconnect to Taixu to check its apps.');
+      return callApps(child, 'chunk', input) as Promise<string>;
+    },
+    localAppReceive: (input) => {
+      if (updateHeld) throw new Error('Reconnect after Taixu finishes updating.');
+      return callApps(localAppsHost(), 'receive', input) as Promise<{ received: number }>;
+    },
+    localAppInstall: async (input) => {
+      if (updateHeld) throw new Error('Reconnect after Taixu finishes updating.');
+      activeSubmissions++;
+      try {
+        await callApps(localAppsHost(), 'install', input);
+        return null;
       } finally {
         activeSubmissions--;
       }
