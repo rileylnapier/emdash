@@ -1,7 +1,13 @@
 import { pullRequestSchema } from '@emdash/plugins/pull-requests/schemas';
 import { defineContract, eventStream, procedure } from '@emdash/wire/rpc';
 import { z } from 'zod';
-import { appActionSchema, appsStatusSchema } from './apps-contract';
+import {
+  appActionSchema,
+  appChunkInputSchema,
+  appReceiveInputSchema,
+  appReleaseSchema,
+  appsStatusSchema,
+} from './apps-contract';
 
 export const taixuDomain = 'taixu' as const;
 export const workOriginSchema = z.object({
@@ -113,6 +119,18 @@ export const taixuContract = defineContract({
     output: appsStatusSchema,
     callTimeoutMs: 90000,
   }),
+  // The selected computer's (Studio's) published release of an app, and its pieces.
+  appRelease: procedure({
+    input: z.object({ appId: appReleaseSchema.shape.appId }),
+    output: appReleaseSchema.nullable(),
+  }),
+  appChunk: procedure({ input: appChunkInputSchema, output: z.string() }),
+  // Always this Mac: receive the pieces, then install them.
+  localAppReceive: procedure({
+    input: appReceiveInputSchema,
+    output: z.object({ received: z.number().int() }),
+  }),
+  localAppInstall: procedure({ input: appReleaseSchema, output: z.null(), callTimeoutMs: 300000 }),
   readArchive: procedure({ input: workTargetSchema, output: workArchiveNoteSchema.nullable() }),
   listArchives: procedure({
     input: z.object({ offset: z.number().int().min(0).default(0) }),
