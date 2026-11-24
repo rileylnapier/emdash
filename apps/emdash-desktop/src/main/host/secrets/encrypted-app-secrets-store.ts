@@ -4,12 +4,14 @@ import { safeStorage } from 'electron';
 import type { AppDb, DrizzleTx } from '@core/services/app-db/node/db';
 import { appSecrets } from '@core/services/app-db/node/schema';
 import { getAppDb } from '@main/db/instance';
+import { log } from '@main/lib/logger';
 
 export class EncryptedAppSecretsStore {
   constructor(
     private readonly database?: AppDb,
     private readonly safeStorageApi = safeStorage,
-    private readonly platform: NodeJS.Platform = process.platform
+    private readonly platform: NodeJS.Platform = process.platform,
+    private readonly logger: Pick<typeof log, 'warn'> = log
   ) {}
 
   private get db(): AppDb {
@@ -29,7 +31,18 @@ export class EncryptedAppSecretsStore {
     }
 
     this.assertSecureStorageAvailable();
-    return secret(this.safeStorageApi.decryptString(Buffer.from(encrypted, 'base64')), key);
+    try {
+      return secret(this.safeStorageApi.decryptString(Buffer.from(encrypted, 'base64')), key);
+    } catch (error) {
+      // The macOS Keychain key for this app changed (it was deleted or recreated), so a secret saved under the old key
+      // can't be read. Treat it as missing (the account needs signing in again) instead of failing startup. The
+      // encrypted value is kept: it reads again if the old key comes back, and signing in overwrites it.
+      this.logger.warn('A saved secret could not be decrypted; treating it as signed out', {
+        key,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
   }
 
   async setSecret(key: string, value: Secret<string>): Promise<void> {
