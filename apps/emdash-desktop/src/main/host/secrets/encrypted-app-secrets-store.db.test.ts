@@ -47,6 +47,25 @@ describe('EncryptedAppSecretsStore', () => {
     expect(rows[0]?.secret).not.toContain('hunter2');
   });
 
+  it('treats a secret saved under a lost Keychain key as missing, without deleting it', async () => {
+    fixture = await openFixture('empty');
+    const warn = vi.fn();
+    const lostKey = {
+      ...fakeSafeStorage,
+      decryptString: () => {
+        throw new Error('Error while decrypting the ciphertext provided to safeStorage.decryptString.');
+      },
+    } as unknown as Electron.SafeStorage;
+    await new EncryptedAppSecretsStore(fixture.db, fakeSafeStorage, 'darwin').setSecret('github:me', secret('hunter2'));
+    const store = new EncryptedAppSecretsStore(fixture.db, lostKey, 'darwin', { warn });
+
+    await expect(store.getSecret('github:me')).resolves.toBeNull();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('could not be decrypted'), expect.objectContaining({ key: 'github:me' }));
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('hunter2');
+    const rows = await fixture.db.select({ secret: appSecrets.secret }).from(appSecrets).where(eq(appSecrets.key, 'github:me'));
+    expect(rows).toHaveLength(1);
+  });
+
   it('returns null for a missing key', async () => {
     const store = await makeStore();
     await expect(store.getSecret('missing')).resolves.toBeNull();
