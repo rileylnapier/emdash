@@ -12,15 +12,18 @@ const singleAppActionSchema = z.object({
     .string()
     .regex(/^[a-f0-9]{64}$/)
     .optional(),
-  action: z.enum(['start', 'open', 'stop', 'check-update', 'update', 'install']),
+  // Restart is only for a service that runs but never answers; the hub checks that before forcing it.
+  action: z.enum(['start', 'open', 'stop', 'check-update', 'update', 'install', 'restart']),
 });
 // Update all runs one app at a time on the computer that receives it.
+// Start all starts every stopped app and restarts every stuck one there, leaving answering apps alone.
 export const appActionSchema = z.union([
   singleAppActionSchema,
   z.object({
     action: z.literal('update-all'),
     ceilings: z.array(z.object({ appId: appIdSchema, version: versionSchema })).optional(),
   }),
+  z.object({ action: z.literal('start-all') }),
 ]);
 export type AppAction = z.infer<typeof appActionSchema>;
 export const appsStatusSchema = z.object({
@@ -53,6 +56,7 @@ export const appsStatusSchema = z.object({
         'planned',
         'needs-install',
         'stopped',
+        'not-responding',
         'idle',
         'running',
         'updating',

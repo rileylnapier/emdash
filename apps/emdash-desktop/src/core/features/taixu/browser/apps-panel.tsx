@@ -45,6 +45,7 @@ const labels = {
   running: 'Service running',
   idle: 'Needs attention',
   stopped: 'Stopped',
+  'not-responding': 'Not responding',
   'needs-install': 'Update required',
   planned: 'Coming later',
   unavailable: 'Unavailable',
@@ -197,7 +198,13 @@ export function AppsPanel() {
     }
   };
   const act = async (input: AppAction, where: 'selected' | 'local' = 'selected') => {
-    setBusy(input.action === 'update-all' ? `all-${where}` : `${where}-${input.appId}`);
+    setBusy(
+      input.action === 'update-all'
+        ? `all-${where}`
+        : input.action === 'start-all'
+          ? `start-${where}`
+          : `${where}-${input.appId}`
+    );
     setError('');
     try {
       const client = await getTaixuClient();
@@ -264,6 +271,13 @@ export function AppsPanel() {
       )}
       {status && (
         <div className="taixu-app-actions">
+          <button
+            disabled={!!busy || bothRunning || !!status.updateAll?.running}
+            onClick={() => void act({ action: 'start-all' })}
+            title="Start every stopped app and restart any that stopped answering. Apps that are fine are left alone."
+          >
+            {busy === 'start-selected' ? 'Starting apps…' : `Start all apps on ${status.computer}`}
+          </button>
           <button
             disabled={!!busy || bothRunning || !!status.updateAll?.running}
             onClick={() => void act({ action: 'update-all' })}
@@ -409,6 +423,16 @@ export function AppsPanel() {
                   onClick={() => void act({ appId: app.id, action: 'install' })}
                 >
                   Install {app.install.version} on {status.computer}
+                </button>
+              </div>
+            )}
+            {app.state === 'not-responding' && (
+              <div className="taixu-app-actions">
+                <button
+                  disabled={!!busy}
+                  onClick={() => void act({ appId: app.id, action: 'restart' })}
+                >
+                  Restart {app.name}
                 </button>
               </div>
             )}
